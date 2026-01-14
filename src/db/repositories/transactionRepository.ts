@@ -99,7 +99,7 @@ export function createTransactionRepository(db: AppDatabase) {
         .select()
         .from(transactions)
         .where(eq(transactions.stockId, stockId))
-        .orderBy(desc(transactions.date))
+        .orderBy(desc(transactions.date), desc(transactions.createdAt))
         .all();
     },
 
@@ -108,7 +108,7 @@ export function createTransactionRepository(db: AppDatabase) {
         .select()
         .from(transactions)
         .where(eq(transactions.stockId, stockId))
-        .orderBy(desc(transactions.date))
+        .orderBy(desc(transactions.date), desc(transactions.createdAt))
         .limit(limit)
         .all();
     },

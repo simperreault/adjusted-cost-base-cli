@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useStdout } from "ink";
 import { TextInput } from "@inkjs/ui";
 import type { AppDatabase } from "../../db/index.ts";
 import { createTransactionRepository } from "../../db/repositories/transactionRepository.ts";
@@ -22,15 +22,25 @@ interface StockDetailProps {
 type TransactionMode = "BUY" | "SELL";
 type Field = "date" | "quantity" | "price" | "fees";
 
+const FIELDS: Field[] = ["date", "quantity", "price", "fees"];
+const LABEL_WIDTH = 12;
+
 export function StockDetail({ db, stock, onBack }: StockDetailProps) {
+  const { stdout } = useStdout();
+  const terminalWidth = stdout?.columns ?? 80;
+  const terminalHeight = stdout?.rows ?? 24;
+  const isWideTerminal = terminalWidth >= 80;
+
   const [mode, setMode] = useState<TransactionMode>("BUY");
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
   const [snapshot, setSnapshot] = useState<StockSnapshotRow | null>(null);
+  const [scrollOffset, setScrollOffset] = useState(0);
 
-  // Form state - stores submitted values
+  // Form state
   const [date, setDate] = useState("");
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
+  const [fees, setFees] = useState("");
   const [field, setField] = useState<Field>("date");
   const [error, setError] = useState<string | null>(null);
   const [formKey, setFormKey] = useState(0);
@@ -38,8 +48,18 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   const txRepo = createTransactionRepository(db);
 
   const refreshData = () => {
-    setTransactions(txRepo.findRecent(stock.id, 10));
+    const recent = txRepo.findRecent(stock.id, 50);
+    // Reverse to show oldest first, newest at bottom
+    setTransactions([...recent].reverse());
     setSnapshot(txRepo.getLatestSnapshot(stock.id) ?? null);
+    // Auto-scroll to bottom
+    setScrollOffset(Math.max(0, recent.length - getVisibleRowCount()));
+  };
+
+  const getVisibleRowCount = () => {
+    // Reserve space for header, form, footer
+    const reservedRows = isWideTerminal ? 8 : 18;
+    return Math.max(3, terminalHeight - reservedRows);
   };
 
   useEffect(() => {
@@ -49,10 +69,36 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   useInput((input, key) => {
     if (key.escape) {
       onBack();
+      return;
     }
-    if (key.tab) {
+
+    // Tab without shift: toggle Buy/Sell mode
+    if (key.tab && !key.shift) {
       setMode((m) => (m === "BUY" ? "SELL" : "BUY"));
       setError(null);
+      return;
+    }
+
+    // Shift+Tab: go back to previous field
+    if (key.tab && key.shift) {
+      const currentIndex = FIELDS.indexOf(field);
+      if (currentIndex > 0) {
+        const prevField = FIELDS[currentIndex - 1];
+        if (prevField) {
+          setField(prevField);
+          setError(null);
+        }
+      }
+      return;
+    }
+
+    // Arrow keys for scrolling transactions
+    if (key.upArrow) {
+      setScrollOffset((o) => Math.max(0, o - 1));
+    }
+    if (key.downArrow) {
+      const maxOffset = Math.max(0, transactions.length - getVisibleRowCount());
+      setScrollOffset((o) => Math.min(maxOffset, o + 1));
     }
   });
 
@@ -60,6 +106,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     setDate("");
     setQuantity("");
     setPrice("");
+    setFees("");
     setField("date");
     setError(null);
     setFormKey((k) => k + 1);
@@ -69,7 +116,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     const dateValue = value.trim() === "" ? "today" : value;
     const parsed = parseDate(dateValue);
     if (!parsed) {
-      setError("Invalid date format. Use YYYY-MM-DD or 'today'");
+      setError("Invalid date. Try: YYYY-MM-DD, DD/MM/YYYY, or 'today'");
       return;
     }
     setDate(formatDate(parsed));
@@ -152,136 +199,211 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     }
   };
 
-  return (
-    <Box flexDirection="column" key={formKey}>
-      <Box marginBottom={1}>
-        <Text bold color="cyan">
-          {stock.name} ({stock.ticker})
-        </Text>
-        <Text color="gray"> - {stock.currency}</Text>
-      </Box>
+  const getFieldValue = (f: Field): string => {
+    switch (f) {
+      case "date":
+        return date;
+      case "quantity":
+        return quantity;
+      case "price":
+        return price;
+      case "fees":
+        return fees;
+    }
+  };
 
-      {stock.currency === "USD" && (
-        <Box marginBottom={1}>
-          <Text color="yellow" wrap="wrap">
-            ⚠️ {EXCHANGE_RATE_WARNING}
-          </Text>
-        </Box>
-      )}
+  const getFieldLabel = (f: Field): string => {
+    switch (f) {
+      case "date":
+        return "Date";
+      case "quantity":
+        return "Quantity";
+      case "price":
+        return `Price (${stock.currency})`;
+      case "fees":
+        return `Fees (${stock.currency})`;
+    }
+  };
 
-      {snapshot && (
-        <Box marginBottom={1} flexDirection="column">
-          <Text>
-            <Text bold>Shares:</Text> {snapshot.totalShares}
-          </Text>
-          <Text>
-            <Text bold>ACB:</Text> {formatCurrency(snapshot.acbPerShare, "CAD")}/share
-          </Text>
-          <Text>
-            <Text bold>Total Cost:</Text>{" "}
-            {formatCurrency(snapshot.totalCostCad, "CAD")}
-          </Text>
-        </Box>
-      )}
+  const getFieldPlaceholder = (f: Field): string => {
+    switch (f) {
+      case "date":
+        return "today";
+      case "quantity":
+        return "100";
+      case "price":
+        return "150.50";
+      case "fees":
+        return "0";
+    }
+  };
 
-      <Box marginBottom={1}>
-        <Text color={mode === "BUY" ? "green" : "gray"} bold={mode === "BUY"}>
-          [Buy]
-        </Text>
-        <Text> </Text>
-        <Text color={mode === "SELL" ? "red" : "gray"} bold={mode === "SELL"}>
-          [Sell]
-        </Text>
-        <Text color="gray"> (Press Tab to switch)</Text>
-      </Box>
+  const getFieldHandler = (f: Field) => {
+    switch (f) {
+      case "date":
+        return handleDateSubmit;
+      case "quantity":
+        return handleQuantitySubmit;
+      case "price":
+        return handlePriceSubmit;
+      case "fees":
+        return handleFeesSubmit;
+    }
+  };
 
-      <Box flexDirection="column" marginBottom={1}>
-        <Text bold>New {mode} Transaction:</Text>
+  const renderFormField = (f: Field) => {
+    const isActive = field === f;
+    const isPending = FIELDS.indexOf(f) > FIELDS.indexOf(field);
+    const value = getFieldValue(f);
+    const label = getFieldLabel(f).padEnd(LABEL_WIDTH);
 
-        <Box marginTop={1}>
-          <Text color={field === "date" ? "cyan" : "gray"}>Date: </Text>
-          {field === "date" ? (
-            <TextInput
-              placeholder="YYYY-MM-DD or 'today' (default)"
-              onSubmit={handleDateSubmit}
-            />
-          ) : (
-            <Text>{date}</Text>
-          )}
-        </Box>
-
-        {["quantity", "price", "fees"].includes(field) && (
-          <Box marginTop={1}>
-            <Text color={field === "quantity" ? "cyan" : "gray"}>Quantity: </Text>
-            {field === "quantity" ? (
-              <TextInput
-                placeholder="e.g., 100"
-                onSubmit={handleQuantitySubmit}
-              />
-            ) : (
-              <Text>{quantity}</Text>
-            )}
-          </Box>
-        )}
-
-        {["price", "fees"].includes(field) && (
-          <Box marginTop={1}>
-            <Text color={field === "price" ? "cyan" : "gray"}>
-              Price per share ({stock.currency}):{" "}
-            </Text>
-            {field === "price" ? (
-              <TextInput
-                placeholder="e.g., 150.50"
-                onSubmit={handlePriceSubmit}
-              />
-            ) : (
-              <Text>{price}</Text>
-            )}
-          </Box>
-        )}
-
-        {field === "fees" && (
-          <Box marginTop={1}>
-            <Text color="cyan">Fees ({stock.currency}): </Text>
-            <TextInput
-              placeholder="0 (default)"
-              onSubmit={handleFeesSubmit}
-            />
-          </Box>
+    return (
+      <Box key={f}>
+        <Text color={isActive ? "cyan" : "gray"}>{label}</Text>
+        {isActive ? (
+          <TextInput
+            key={`${formKey}-${f}`}
+            placeholder={getFieldPlaceholder(f)}
+            onSubmit={getFieldHandler(f)}
+          />
+        ) : isPending ? (
+          <Text color="gray">—</Text>
+        ) : (
+          <Text>{value}</Text>
         )}
       </Box>
+    );
+  };
 
-      {error && (
-        <Box marginBottom={1}>
-          <Text color="red">{error}</Text>
-        </Box>
-      )}
+  const visibleRows = getVisibleRowCount();
+  const visibleTransactions = transactions.slice(scrollOffset, scrollOffset + visibleRows);
+  const hasScrollUp = scrollOffset > 0;
+  const hasScrollDown = scrollOffset + visibleRows < transactions.length;
 
-      {transactions.length > 0 && (
-        <Box flexDirection="column">
-          <Text bold>Recent Transactions:</Text>
-          <Text color="gray">
-            {"Date       Type Qty    Price      Fees"}
-          </Text>
-          <Text color="gray">{"─".repeat(45)}</Text>
-          {transactions.slice(0, 10).map((tx) => (
+  const renderTransactionsPanel = () => (
+    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+      <Text bold>Transactions</Text>
+      <Text color="gray">{"─".repeat(28)}</Text>
+
+      {transactions.length === 0 ? (
+        <Text color="gray">No transactions yet</Text>
+      ) : (
+        <>
+          {hasScrollUp && <Text color="gray">  ↑ more</Text>}
+          {visibleTransactions.map((tx) => (
             <Text key={tx.id}>
-              {formatDate(new Date(tx.date))}{" "}
+              <Text color="gray">{formatDate(new Date(tx.date))} </Text>
               {tx.type === "BUY" ? (
                 <Text color="green">BUY </Text>
               ) : (
                 <Text color="red">SELL</Text>
-              )}{" "}
-              {tx.quantity.toString().padStart(6)}{" "}
-              {formatCurrency(tx.pricePerShare, stock.currency).padStart(10)}{" "}
-              {tx.fees > 0 ? formatCurrency(tx.fees, stock.currency) : "-"}
+              )}
+              <Text> {tx.quantity.toString().padStart(4)} </Text>
+              <Text>{formatCurrency(tx.pricePerShare, stock.currency)}</Text>
             </Text>
           ))}
+          {hasScrollDown && <Text color="gray">  ↓ more</Text>}
+        </>
+      )}
+
+      {transactions.length > visibleRows && (
+        <Text color="gray" dimColor>
+          [↑/↓] scroll
+        </Text>
+      )}
+    </Box>
+  );
+
+  const renderFormPanel = () => (
+    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} width={42}>
+      <Box>
+        <Text
+          color={mode === "BUY" ? "green" : "gray"}
+          bold={mode === "BUY"}
+          inverse={mode === "BUY"}
+        >
+          {" BUY "}
+        </Text>
+        <Text> </Text>
+        <Text
+          color={mode === "SELL" ? "red" : "gray"}
+          bold={mode === "SELL"}
+          inverse={mode === "SELL"}
+        >
+          {" SELL "}
+        </Text>
+      </Box>
+
+      <Box marginTop={1} flexDirection="column">
+        {FIELDS.map(renderFormField)}
+      </Box>
+
+      {error && (
+        <Box marginTop={1}>
+          <Text color="red">{error}</Text>
+        </Box>
+      )}
+    </Box>
+  );
+
+  return (
+    <Box flexDirection="column" key={formKey}>
+      {/* Stock Header */}
+      <Box
+        borderStyle="round"
+        borderColor="cyan"
+        paddingX={1}
+        flexDirection="column"
+        marginBottom={1}
+      >
+        <Box justifyContent="space-between">
+          <Text bold color="cyan">
+            {stock.name} ({stock.ticker})
+          </Text>
+          <Text color="gray">{stock.currency}</Text>
+        </Box>
+
+        {snapshot && (
+          <Text>
+            <Text bold>{snapshot.totalShares}</Text>
+            <Text color="gray"> shares</Text>
+            <Text color="gray"> · </Text>
+            <Text>ACB: </Text>
+            <Text bold>{formatCurrency(snapshot.acbPerShare, "CAD")}</Text>
+            <Text>/share</Text>
+            <Text color="gray"> · </Text>
+            <Text>Total: </Text>
+            <Text bold>{formatCurrency(snapshot.totalCostCad, "CAD")}</Text>
+          </Text>
+        )}
+
+        {stock.currency === "USD" && (
+          <Text color="yellow" wrap="wrap">
+            {EXCHANGE_RATE_WARNING}
+          </Text>
+        )}
+      </Box>
+
+      {/* Main Content: Form + Transactions */}
+      {isWideTerminal ? (
+        <Box>
+          {renderFormPanel()}
+          <Box marginLeft={1} flexGrow={1}>
+            {renderTransactionsPanel()}
+          </Box>
+        </Box>
+      ) : (
+        <Box flexDirection="column">
+          {renderFormPanel()}
+          <Box marginTop={1}>{renderTransactionsPanel()}</Box>
         </Box>
       )}
 
+      {/* Footer */}
       <Box marginTop={1}>
-        <Text color="gray">[Tab] Switch Buy/Sell | [Esc] Back to portfolio</Text>
+        <Text color="gray">
+          [Tab] Buy/Sell · [Shift+Tab] Back · [Enter] Next · [Esc] Exit
+        </Text>
       </Box>
     </Box>
   );
