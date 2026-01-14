@@ -1,0 +1,34 @@
+{
+  "name": "adjusted-cost-base-cli",
+  "version": "0.1.0",
+  "description": "Command line tool to track adjusted cost base for Canadian stock trading",
+  "module": "src/index.ts",
+  "type": "module",
+  "bin": {
+    "acb-cli": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.2.8",
+    "drizzle-kit": "^0.31.8"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@inkjs/ui": "^2.0.0",
+    "commander": "^14.0.2",
+    "drizzle-orm": "^0.45.1",
+    "ink": "^6.6.0",
+    "react": "^19.2.3"
+  }
+}
