@@ -1,12 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import { TextInput } from "@inkjs/ui";
 import type { AppDatabase } from "../../db/index.ts";
 import { createTransactionRepository } from "../../db/repositories/transactionRepository.ts";
-import {
-  createDistributionRepository,
-  getLatestAcbState,
-} from "../../db/repositories/distributionRepository.ts";
+import { createDistributionRepository } from "../../db/repositories/distributionRepository.ts";
+import { resolveAcbState } from "../../db/repositories/acbStateResolver.ts";
 import type { Stock } from "../../types/index.ts";
 import { formatCurrency } from "../../utils/currency.ts";
 import { formatDate, parseDate } from "../../utils/date.ts";
@@ -15,8 +13,13 @@ import {
   HardcodedExchangeRateProvider,
   EXCHANGE_RATE_WARNING,
 } from "../../services/exchangeRate/index.ts";
-import type { TransactionRow, StockSnapshotRow, DistributionRow } from "../../db/schema.ts";
+import type { TransactionRow, DistributionRow } from "../../db/schema.ts";
+import type { ACBState } from "../../types/index.ts";
 import { isSupportedTicker } from "../../../data/distributions/index.ts";
+
+type TimelineEntry =
+  | { kind: "tx"; date: Date; id: number; data: TransactionRow }
+  | { kind: "dist"; date: Date; id: number; data: DistributionRow };
 
 interface StockDetailProps {
   db: AppDatabase;
@@ -40,9 +43,10 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   const [mode, setMode] = useState<TransactionMode>("BUY");
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
   const [distributions, setDistributions] = useState<DistributionRow[]>([]);
-  const [snapshot, setSnapshot] = useState<StockSnapshotRow | null>(null);
+  const [acbState, setAcbState] = useState<ACBState | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Form state
   const [date, setDate] = useState("");
@@ -55,8 +59,8 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   const [error, setError] = useState<string | null>(null);
   const [formKey, setFormKey] = useState(0);
 
-  const txRepo = createTransactionRepository(db);
-  const distRepo = createDistributionRepository(db);
+  const txRepo = useMemo(() => createTransactionRepository(db), [db]);
+  const distRepo = useMemo(() => createDistributionRepository(db), [db]);
 
   const activeFields = mode === "DIST" ? DIST_FIELDS : TX_FIELDS;
 
@@ -64,34 +68,13 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     const recent = txRepo.findRecent(stock.id, 50);
     // Reverse to show oldest first, newest at bottom
     setTransactions([...recent].reverse());
-    setDistributions(distRepo.findByStockId(stock.id));
-    const acbState = getLatestAcbState(db, stock.id);
-    const txSnapshot = txRepo.getLatestSnapshot(stock.id) ?? null;
-    // Use txSnapshot for display but with ACB from unified state
-    if (txSnapshot) {
-      setSnapshot({
-        ...txSnapshot,
-        totalCostCad: acbState.totalCostCad,
-        acbPerShare: acbState.acbPerShare,
-        totalShares: acbState.totalShares,
-      });
-    } else if (acbState.totalShares > 0) {
-      setSnapshot({
-        id: 0,
-        stockId: stock.id,
-        transactionId: 0,
-        totalShares: acbState.totalShares,
-        totalCostCad: acbState.totalCostCad,
-        acbPerShare: acbState.acbPerShare,
-        realizedGainCad: null,
-        calculatedAt: new Date(),
-      });
-    } else {
-      setSnapshot(null);
-    }
+    const dists = distRepo.findByStockId(stock.id);
+    setDistributions(dists);
 
-    // Combine transactions and distributions for scroll count
-    const totalEntries = recent.length + distRepo.findByStockId(stock.id).length;
+    const state = resolveAcbState(db, stock.id);
+    setAcbState(state.totalShares > 0 ? state : null);
+
+    const totalEntries = recent.length + dists.length;
     setScrollOffset(Math.max(0, totalEntries - getVisibleRowCount()));
   };
 
@@ -104,6 +87,12 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   useEffect(() => {
     refreshData();
   }, [stock.id]);
+
+  useEffect(() => {
+    return () => {
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    };
+  }, []);
 
   useInput((input, key) => {
     if (key.escape) {
@@ -144,7 +133,8 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       } else {
         setSyncMessage("All distributions already applied");
       }
-      setTimeout(() => setSyncMessage(null), 3000);
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = setTimeout(() => setSyncMessage(null), 3000);
       return;
     }
 
@@ -192,7 +182,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     }
 
     if (mode === "SELL") {
-      const available = snapshot?.totalShares ?? 0;
+      const available = acbState?.totalShares ?? 0;
       if (result.value > available) {
         setError(`Cannot sell ${result.value} shares. Only ${available} available.`);
         return;
@@ -242,7 +232,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
 
       txRepo.create({
         stockId: stock.id,
-        type: mode,
+        type: mode as "BUY" | "SELL",
         date: dateResult,
         quantity: qtyResult.value,
         pricePerShare: priceResult.value,
@@ -383,23 +373,26 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     );
   };
 
-  // Merge transactions and distributions into a unified timeline
-  type TimelineEntry =
-    | { kind: "tx"; date: Date; data: TransactionRow }
-    | { kind: "dist"; date: Date; data: DistributionRow };
-
+  const sortOrder = { tx: 1, dist: 0 } as const;
   const timeline: TimelineEntry[] = [
     ...transactions.map((tx): TimelineEntry => ({
       kind: "tx",
-      date: new Date(tx.date),
+      date: tx.date,
+      id: tx.id,
       data: tx,
     })),
     ...distributions.map((d): TimelineEntry => ({
       kind: "dist",
-      date: new Date(d.recordDate),
+      date: d.recordDate,
+      id: d.id,
       data: d,
     })),
-  ].sort((a, b) => a.date.getTime() - b.date.getTime());
+  ].sort((a, b) => {
+    const dateDiff = a.date.getTime() - b.date.getTime();
+    if (dateDiff !== 0) return dateDiff;
+    // Distributions before transactions on same date (matches ACB calculation order)
+    return sortOrder[a.kind] - sortOrder[b.kind];
+  });
 
   const visibleRows = getVisibleRowCount();
   const visibleEntries = timeline.slice(scrollOffset, scrollOffset + visibleRows);
@@ -412,7 +405,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       <Text color="gray">{"─".repeat(28)}</Text>
 
       {timeline.length === 0 ? (
-        <Text color="gray">No transactions yet</Text>
+        <Text color="gray">No history yet</Text>
       ) : (
         <>
           {hasScrollUp && <Text color="gray">  ↑ more</Text>}
@@ -520,17 +513,17 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
           <Text color="gray">{stock.currency}</Text>
         </Box>
 
-        {snapshot && (
+        {acbState && (
           <Text>
-            <Text bold>{snapshot.totalShares}</Text>
+            <Text bold>{acbState.totalShares}</Text>
             <Text color="gray"> shares</Text>
             <Text color="gray"> · </Text>
             <Text>ACB: </Text>
-            <Text bold>{formatCurrency(snapshot.acbPerShare, "CAD")}</Text>
+            <Text bold>{formatCurrency(acbState.acbPerShare, "CAD")}</Text>
             <Text>/share</Text>
             <Text color="gray"> · </Text>
             <Text>Total: </Text>
-            <Text bold>{formatCurrency(snapshot.totalCostCad, "CAD")}</Text>
+            <Text bold>{formatCurrency(acbState.totalCostCad, "CAD")}</Text>
           </Text>
         )}
 

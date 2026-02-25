@@ -5,7 +5,8 @@ import { formatCurrency } from "../../utils/currency.ts";
 import { openUserDatabase } from "../../services/userService.ts";
 import { createStockRepository } from "../../db/repositories/stockRepository.ts";
 import { createDistributionRepository } from "../../db/repositories/distributionRepository.ts";
-import { isSupportedTicker } from "../../../data/distributions/index.ts";
+import { resolveAcbState } from "../../db/repositories/acbStateResolver.ts";
+import { isSupportedTicker, getBundledDistributions } from "../../../data/distributions/index.ts";
 
 const addCommand = new Command("add")
   .description("Record a manual distribution event")
@@ -16,7 +17,7 @@ const addCommand = new Command("add")
   .option("--phantom <amount>", "Phantom distribution (reinvested capital gain) per unit", "0")
   .option("--notes <text>", "Optional notes")
   .option("-p, --password <password>", "Database password")
-  .action(async (options) => {
+  .action((options) => {
     try {
       const tickerResult = validateTicker(options.stock);
       if (!tickerResult.success) {
@@ -55,6 +56,11 @@ const addCommand = new Command("add")
       if (!stock) {
         console.error(`Error: Stock "${tickerResult.value}" not found. Create it first.`);
         process.exit(1);
+      }
+
+      const state = resolveAcbState(db, stock.id);
+      if (state.totalShares === 0) {
+        console.warn(`Warning: ${stock.ticker} has 0 shares. Distribution will have no effect on ACB.`);
       }
 
       const existing = distRepo.findByRecordDate(stock.id, date);
@@ -100,7 +106,7 @@ const syncCommand = new Command("sync")
   .requiredOption("-s, --stock <ticker>", "Stock ticker")
   .option("--dry-run", "Show what would be applied without applying")
   .option("-p, --password <password>", "Database password")
-  .action(async (options) => {
+  .action((options) => {
     try {
       const tickerResult = validateTicker(options.stock);
       if (!tickerResult.success) {
@@ -126,7 +132,6 @@ const syncCommand = new Command("sync")
       }
 
       if (options.dryRun) {
-        const { getBundledDistributions } = await import("../../../data/distributions/index.ts");
         const bundled = getBundledDistributions(ticker);
         if (!bundled) return;
 
@@ -159,7 +164,7 @@ const listDistCommand = new Command("list")
   .requiredOption("-u, --user <username>", "User account")
   .requiredOption("-s, --stock <ticker>", "Stock ticker")
   .option("-p, --password <password>", "Database password")
-  .action(async (options) => {
+  .action((options) => {
     try {
       const tickerResult = validateTicker(options.stock);
       if (!tickerResult.success) {
