@@ -1,4 +1,5 @@
 import type { ACBState } from "../types/index.ts";
+import { assertACBState } from "./invariants.ts";
 
 export interface BuyTransactionInput {
   quantity: number;
@@ -17,6 +18,26 @@ export interface SellResult {
   capitalGainCad: number;
 }
 
+function validateFinite(value: number, label: string): void {
+  if (!Number.isFinite(value)) {
+    throw new Error(`${label} must be a finite number, got ${value}`);
+  }
+}
+
+function validateNonNegative(value: number, label: string): void {
+  validateFinite(value, label);
+  if (value < 0) {
+    throw new Error(`${label} must be non-negative, got ${value}`);
+  }
+}
+
+function validatePositive(value: number, label: string): void {
+  validateFinite(value, label);
+  if (value <= 0) {
+    throw new Error(`${label} must be positive, got ${value}`);
+  }
+}
+
 export function getInitialAcbState(): ACBState {
   return {
     totalShares: 0,
@@ -29,22 +50,32 @@ export function calculateAcbAfterBuy(
   currentState: ACBState,
   transaction: BuyTransactionInput
 ): ACBState {
+  validatePositive(transaction.quantity, "Buy quantity");
+  validateNonNegative(transaction.pricePerShareCad, "Buy price per share");
+  validateNonNegative(transaction.feesCad, "Buy fees");
+
   const purchaseCost =
     transaction.quantity * transaction.pricePerShareCad + transaction.feesCad;
   const newTotalCost = currentState.totalCostCad + purchaseCost;
   const newTotalShares = currentState.totalShares + transaction.quantity;
 
-  return {
+  const newState: ACBState = {
     totalShares: newTotalShares,
     totalCostCad: newTotalCost,
     acbPerShare: newTotalShares > 0 ? newTotalCost / newTotalShares : 0,
   };
+  assertACBState(newState, { operation: "buy", transaction });
+  return newState;
 }
 
 export function calculateAcbAfterSell(
   currentState: ACBState,
   transaction: SellTransactionInput
 ): SellResult {
+  validatePositive(transaction.quantity, "Sell quantity");
+  validateNonNegative(transaction.proceedsPerShareCad, "Sell price per share");
+  validateNonNegative(transaction.feesCad, "Sell fees");
+
   if (transaction.quantity > currentState.totalShares) {
     throw new Error(
       `Cannot sell ${transaction.quantity} shares, only ${currentState.totalShares} available`
@@ -59,14 +90,13 @@ export function calculateAcbAfterSell(
   const newTotalShares = currentState.totalShares - transaction.quantity;
   const newTotalCost = currentState.totalCostCad - costOfSharesSold;
 
-  return {
-    newState: {
-      totalShares: newTotalShares,
-      totalCostCad: newTotalShares > 0 ? newTotalCost : 0,
-      acbPerShare: newTotalShares > 0 ? newTotalCost / newTotalShares : 0,
-    },
-    capitalGainCad: capitalGain,
+  const newState: ACBState = {
+    totalShares: newTotalShares,
+    totalCostCad: newTotalShares > 0 ? newTotalCost : 0,
+    acbPerShare: newTotalShares > 0 ? newTotalCost / newTotalShares : 0,
   };
+  assertACBState(newState, { operation: "sell", transaction });
+  return { newState, capitalGainCad: capitalGain };
 }
 
 export function recalculateAcbFromTransactions(
@@ -96,5 +126,6 @@ export function recalculateAcbFromTransactions(
     }
   }
 
+  assertACBState(state, { operation: "recalculate", transactionCount: transactions.length });
   return state;
 }

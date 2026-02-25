@@ -1,0 +1,18 @@
+#!/bin/sh
+echo "Running pre-commit checks..."
+
+echo "→ Typecheck"
+bun run typecheck
+if [ $? -ne 0 ]; then
+  echo "✗ Typecheck failed. Commit aborted."
+  exit 1
+fi
+
+echo "→ Tests"
+bun test
+if [ $? -ne 0 ]; then
+  echo "✗ Tests failed. Commit aborted."
+  exit 1
+fi
+
+echo "✓ All checks passed."
