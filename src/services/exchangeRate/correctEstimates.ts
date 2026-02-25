@@ -1,21 +1,28 @@
-import { eq, and } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import type { AppDatabase } from "../../db/index.ts";
-import { transactions, stockSnapshots } from "../../db/schema.ts";
+import { transactions, stockSnapshots, stocks } from "../../db/schema.ts";
 import type { ExchangeRateProvider } from "./types.ts";
 import {
   calculateAcbAfterBuy,
   calculateAcbAfterSell,
   getInitialAcbState,
 } from "../../core/acb.ts";
-import { asc } from "drizzle-orm";
 
 export async function correctEstimateTransactions(
   db: AppDatabase,
   provider: ExchangeRateProvider
 ): Promise<void> {
   const estimatedTxs = db
-    .select()
+    .select({
+      id: transactions.id,
+      stockId: transactions.stockId,
+      pricePerShare: transactions.pricePerShare,
+      fees: transactions.fees,
+      date: transactions.date,
+      currency: stocks.currency,
+    })
     .from(transactions)
+    .innerJoin(stocks, eq(transactions.stockId, stocks.id))
     .where(eq(transactions.exchangeRateIsEstimate, 1))
     .all();
 
@@ -24,8 +31,7 @@ export async function correctEstimateTransactions(
   const affectedStockIds = new Set<number>();
 
   for (const tx of estimatedTxs) {
-    const currency = tx.exchangeRate !== 1 ? "USD" : "CAD";
-    if (currency === "CAD") continue;
+    if (tx.currency === "CAD") continue;
 
     const exchangeRate = await provider.getRate(
       "USD",
@@ -51,13 +57,18 @@ export async function correctEstimateTransactions(
     }
   }
 
-  // Rebuild snapshots for affected stocks
   for (const stockId of affectedStockIds) {
-    db.delete(stockSnapshots)
+    rebuildSnapshots(db, stockId);
+  }
+}
+
+function rebuildSnapshots(db: AppDatabase, stockId: number): void {
+  db.transaction((tx) => {
+    tx.delete(stockSnapshots)
       .where(eq(stockSnapshots.stockId, stockId))
       .run();
 
-    const stockTxs = db
+    const stockTxs = tx
       .select()
       .from(transactions)
       .where(eq(transactions.stockId, stockId))
@@ -65,29 +76,29 @@ export async function correctEstimateTransactions(
       .all();
 
     let state = getInitialAcbState();
-    for (const tx of stockTxs) {
+    for (const t of stockTxs) {
       let realizedGain: number | null = null;
 
-      if (tx.type === "BUY") {
+      if (t.type === "BUY") {
         state = calculateAcbAfterBuy(state, {
-          quantity: tx.quantity,
-          pricePerShareCad: tx.pricePerShareCad,
-          feesCad: tx.feesCad,
+          quantity: t.quantity,
+          pricePerShareCad: t.pricePerShareCad,
+          feesCad: t.feesCad,
         });
       } else {
         const result = calculateAcbAfterSell(state, {
-          quantity: tx.quantity,
-          proceedsPerShareCad: tx.pricePerShareCad,
-          feesCad: tx.feesCad,
+          quantity: t.quantity,
+          proceedsPerShareCad: t.pricePerShareCad,
+          feesCad: t.feesCad,
         });
         state = result.newState;
         realizedGain = result.capitalGainCad;
       }
 
-      db.insert(stockSnapshots)
+      tx.insert(stockSnapshots)
         .values({
           stockId,
-          transactionId: tx.id,
+          transactionId: t.id,
           totalShares: state.totalShares,
           totalCostCad: state.totalCostCad,
           acbPerShare: state.acbPerShare,
@@ -100,5 +111,5 @@ export async function correctEstimateTransactions(
     console.error(
       `[acb-cli] Corrected exchange rates for stock #${stockId}, rebuilt ${stockTxs.length} snapshots`
     );
-  }
+  });
 }

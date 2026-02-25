@@ -6,6 +6,7 @@ import { openUserDatabase } from "../../services/userService.ts";
 import { createStockRepository } from "../../db/repositories/stockRepository.ts";
 import { createTransactionRepository } from "../../db/repositories/transactionRepository.ts";
 import { getExchangeRateProvider } from "../../services/exchangeRate/index.ts";
+import { correctEstimateTransactions } from "../../services/exchangeRate/correctEstimates.ts";
 
 export const buyCommand = new Command("buy")
   .description("Record a buy transaction")
@@ -42,6 +43,7 @@ export const buyCommand = new Command("buy")
       }
 
       const db = openUserDatabase(options.user, options.password);
+      await correctEstimateTransactions(db, getExchangeRateProvider()).catch(() => {});
       const stockRepo = createStockRepository(db);
       const txRepo = createTransactionRepository(db);
 

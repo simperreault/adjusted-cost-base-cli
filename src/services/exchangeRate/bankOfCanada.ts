@@ -2,18 +2,12 @@ import type { Currency } from "../../types/index.ts";
 import type { ExchangeRate, ExchangeRateProvider } from "./types.ts";
 import type { ExchangeRateCache } from "../../db/exchangeRateCache.ts";
 import type { ObservationRate } from "./bankOfCanadaApi.ts";
+import { formatDate } from "../../utils/date.ts";
 
 type FetchRatesFn = (
   startDate: string,
   endDate: string
 ) => Promise<ObservationRate[]>;
-
-function toDateString(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
 
 function subtractDays(date: Date, days: number): Date {
   const result = new Date(date);
@@ -36,7 +30,7 @@ export class BankOfCanadaExchangeRateProvider implements ExchangeRateProvider {
       return { from, to, rate: 1, date, source: "identity", isEstimate: false };
     }
 
-    const dateStr = toDateString(date);
+    const dateStr = formatDate(date);
     const pair = "FXUSDCAD";
 
     // Exact cache hit — no fetch needed
@@ -46,7 +40,7 @@ export class BankOfCanadaExchangeRateProvider implements ExchangeRateProvider {
     }
 
     // No exact match — fetch 10-day window and cache results
-    const startDate = toDateString(subtractDays(date, 9));
+    const startDate = formatDate(subtractDays(date, 9));
     try {
       const rates = await this.fetchRates(startDate, dateStr);
       if (rates.length > 0) {

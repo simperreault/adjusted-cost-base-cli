@@ -52,17 +52,17 @@ describe("ExchangeRateCache", () => {
     cache.close();
   });
 
-  test("duplicate insert is ignored", () => {
+  test("duplicate insert replaces with new rate", () => {
     const cache = createInMemoryExchangeRateCache();
     cache.insertRates([
       { date: "2025-01-15", currencyPair: "FXUSDCAD", rate: 1.44 },
     ]);
-    // Insert again with different rate — should be ignored (INSERT OR IGNORE)
+    // Insert again with different rate — should replace (INSERT OR REPLACE)
     cache.insertRates([
       { date: "2025-01-15", currencyPair: "FXUSDCAD", rate: 9.99 },
     ]);
 
-    expect(cache.getRate("FXUSDCAD", "2025-01-15")).toBe(1.44);
+    expect(cache.getRate("FXUSDCAD", "2025-01-15")).toBe(9.99);
     cache.close();
   });
 

@@ -38,7 +38,7 @@ function createCacheFromDb(db: Database): ExchangeRateCache {
     "SELECT date, rate FROM exchange_rates WHERE currency_pair = ? AND date <= ? ORDER BY date DESC LIMIT 1"
   );
   const insertStmt = db.prepare(
-    "INSERT OR IGNORE INTO exchange_rates (date, currency_pair, rate) VALUES (?, ?, ?)"
+    "INSERT OR REPLACE INTO exchange_rates (date, currency_pair, rate) VALUES (?, ?, ?)"
   );
 
   return {
