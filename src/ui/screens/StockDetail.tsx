@@ -3,6 +3,10 @@ import { Box, Text, useInput, useStdout } from "ink";
 import { TextInput } from "@inkjs/ui";
 import type { AppDatabase } from "../../db/index.ts";
 import { createTransactionRepository } from "../../db/repositories/transactionRepository.ts";
+import {
+  createDistributionRepository,
+  getLatestAcbState,
+} from "../../db/repositories/distributionRepository.ts";
 import type { Stock } from "../../types/index.ts";
 import { formatCurrency } from "../../utils/currency.ts";
 import { formatDate, parseDate } from "../../utils/date.ts";
@@ -11,7 +15,8 @@ import {
   HardcodedExchangeRateProvider,
   EXCHANGE_RATE_WARNING,
 } from "../../services/exchangeRate/index.ts";
-import type { TransactionRow, StockSnapshotRow } from "../../db/schema.ts";
+import type { TransactionRow, StockSnapshotRow, DistributionRow } from "../../db/schema.ts";
+import { isSupportedTicker } from "../../../data/distributions/index.ts";
 
 interface StockDetailProps {
   db: AppDatabase;
@@ -19,10 +24,11 @@ interface StockDetailProps {
   onBack: () => void;
 }
 
-type TransactionMode = "BUY" | "SELL";
-type Field = "date" | "quantity" | "price" | "fees";
+type TransactionMode = "BUY" | "SELL" | "DIST";
+type Field = "date" | "quantity" | "price" | "fees" | "roc" | "phantom";
 
-const FIELDS: Field[] = ["date", "quantity", "price", "fees"];
+const TX_FIELDS: Field[] = ["date", "quantity", "price", "fees"];
+const DIST_FIELDS: Field[] = ["date", "roc", "phantom"];
 const LABEL_WIDTH = 12;
 
 export function StockDetail({ db, stock, onBack }: StockDetailProps) {
@@ -33,27 +39,60 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
 
   const [mode, setMode] = useState<TransactionMode>("BUY");
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
+  const [distributions, setDistributions] = useState<DistributionRow[]>([]);
   const [snapshot, setSnapshot] = useState<StockSnapshotRow | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   // Form state
   const [date, setDate] = useState("");
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
   const [fees, setFees] = useState("");
+  const [roc, setRoc] = useState("");
+  const [phantom, setPhantom] = useState("");
   const [field, setField] = useState<Field>("date");
   const [error, setError] = useState<string | null>(null);
   const [formKey, setFormKey] = useState(0);
 
   const txRepo = createTransactionRepository(db);
+  const distRepo = createDistributionRepository(db);
+
+  const activeFields = mode === "DIST" ? DIST_FIELDS : TX_FIELDS;
 
   const refreshData = () => {
     const recent = txRepo.findRecent(stock.id, 50);
     // Reverse to show oldest first, newest at bottom
     setTransactions([...recent].reverse());
-    setSnapshot(txRepo.getLatestSnapshot(stock.id) ?? null);
-    // Auto-scroll to bottom
-    setScrollOffset(Math.max(0, recent.length - getVisibleRowCount()));
+    setDistributions(distRepo.findByStockId(stock.id));
+    const acbState = getLatestAcbState(db, stock.id);
+    const txSnapshot = txRepo.getLatestSnapshot(stock.id) ?? null;
+    // Use txSnapshot for display but with ACB from unified state
+    if (txSnapshot) {
+      setSnapshot({
+        ...txSnapshot,
+        totalCostCad: acbState.totalCostCad,
+        acbPerShare: acbState.acbPerShare,
+        totalShares: acbState.totalShares,
+      });
+    } else if (acbState.totalShares > 0) {
+      setSnapshot({
+        id: 0,
+        stockId: stock.id,
+        transactionId: 0,
+        totalShares: acbState.totalShares,
+        totalCostCad: acbState.totalCostCad,
+        acbPerShare: acbState.acbPerShare,
+        realizedGainCad: null,
+        calculatedAt: new Date(),
+      });
+    } else {
+      setSnapshot(null);
+    }
+
+    // Combine transactions and distributions for scroll count
+    const totalEntries = recent.length + distRepo.findByStockId(stock.id).length;
+    setScrollOffset(Math.max(0, totalEntries - getVisibleRowCount()));
   };
 
   const getVisibleRowCount = () => {
@@ -72,18 +111,22 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       return;
     }
 
-    // Tab without shift: toggle Buy/Sell mode
+    // Tab without shift: cycle BUY -> SELL -> DIST
     if (key.tab && !key.shift) {
-      setMode((m) => (m === "BUY" ? "SELL" : "BUY"));
-      setError(null);
+      setMode((m) => {
+        if (m === "BUY") return "SELL";
+        if (m === "SELL") return "DIST";
+        return "BUY";
+      });
+      resetForm();
       return;
     }
 
     // Shift+Tab: go back to previous field
     if (key.tab && key.shift) {
-      const currentIndex = FIELDS.indexOf(field);
+      const currentIndex = activeFields.indexOf(field);
       if (currentIndex > 0) {
-        const prevField = FIELDS[currentIndex - 1];
+        const prevField = activeFields[currentIndex - 1];
         if (prevField) {
           setField(prevField);
           setError(null);
@@ -92,12 +135,26 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       return;
     }
 
-    // Arrow keys for scrolling transactions
+    // [S] key: sync bundled distributions (only when on date field to avoid capturing text input)
+    if (input === "s" && field === "date" && date === "" && isSupportedTicker(stock.ticker)) {
+      const { applied, skipped } = distRepo.applyBundledDistributions(stock.id, stock.ticker);
+      if (applied > 0) {
+        setSyncMessage(`Synced ${applied} distribution(s)${skipped > 0 ? `, ${skipped} skipped` : ""}`);
+        refreshData();
+      } else {
+        setSyncMessage("All distributions already applied");
+      }
+      setTimeout(() => setSyncMessage(null), 3000);
+      return;
+    }
+
+    // Arrow keys for scrolling
     if (key.upArrow) {
       setScrollOffset((o) => Math.max(0, o - 1));
     }
     if (key.downArrow) {
-      const maxOffset = Math.max(0, transactions.length - getVisibleRowCount());
+      const totalEntries = transactions.length + distributions.length;
+      const maxOffset = Math.max(0, totalEntries - getVisibleRowCount());
       setScrollOffset((o) => Math.min(maxOffset, o + 1));
     }
   });
@@ -107,6 +164,8 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     setQuantity("");
     setPrice("");
     setFees("");
+    setRoc("");
+    setPhantom("");
     setField("date");
     setError(null);
     setFormKey((k) => k + 1);
@@ -121,7 +180,8 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     }
     setDate(formatDate(parsed));
     setError(null);
-    setField("quantity");
+    // Next field depends on mode
+    setField(mode === "DIST" ? "roc" : "quantity");
   };
 
   const handleQuantitySubmit = (value: string) => {
@@ -199,61 +259,109 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     }
   };
 
+  const handleRocSubmit = (value: string) => {
+    const rocValue = value.trim() === "" ? "0" : value;
+    const result = validatePrice(rocValue);
+    if (!result.success) {
+      setError(result.error);
+      return;
+    }
+    setRoc(rocValue);
+    setError(null);
+    setField("phantom");
+  };
+
+  const handlePhantomSubmit = async (value: string) => {
+    const phantomValue = value.trim() === "" ? "0" : value;
+    const phantomResult = validatePrice(phantomValue);
+    if (!phantomResult.success) {
+      setError(phantomResult.error);
+      return;
+    }
+
+    const rocValue = roc.trim() === "" ? 0 : Number(roc);
+    const phantomNum = Number(phantomValue);
+
+    if (rocValue === 0 && phantomNum === 0) {
+      setError("At least one of ROC or phantom must be non-zero");
+      return;
+    }
+
+    const dateResult = parseDate(date);
+    if (!dateResult) {
+      setError("Invalid form data");
+      return;
+    }
+
+    try {
+      const existing = distRepo.findByRecordDate(stock.id, dateResult);
+      if (existing) {
+        setError(`Distribution already exists for ${formatDate(dateResult)}`);
+        return;
+      }
+
+      distRepo.create({
+        stockId: stock.id,
+        recordDate: dateResult,
+        rocPerUnit: rocValue,
+        phantomDistPerUnit: phantomNum,
+        source: "manual",
+      });
+
+      resetForm();
+      refreshData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to create distribution");
+    }
+  };
+
   const getFieldValue = (f: Field): string => {
     switch (f) {
-      case "date":
-        return date;
-      case "quantity":
-        return quantity;
-      case "price":
-        return price;
-      case "fees":
-        return fees;
+      case "date": return date;
+      case "quantity": return quantity;
+      case "price": return price;
+      case "fees": return fees;
+      case "roc": return roc;
+      case "phantom": return phantom;
     }
   };
 
   const getFieldLabel = (f: Field): string => {
     switch (f) {
-      case "date":
-        return "Date";
-      case "quantity":
-        return "Quantity";
-      case "price":
-        return `Price (${stock.currency})`;
-      case "fees":
-        return `Fees (${stock.currency})`;
+      case "date": return mode === "DIST" ? "Record Date" : "Date";
+      case "quantity": return "Quantity";
+      case "price": return `Price (${stock.currency})`;
+      case "fees": return `Fees (${stock.currency})`;
+      case "roc": return "ROC/unit";
+      case "phantom": return "Phantom/unit";
     }
   };
 
   const getFieldPlaceholder = (f: Field): string => {
     switch (f) {
-      case "date":
-        return "today";
-      case "quantity":
-        return "100";
-      case "price":
-        return "150.50";
-      case "fees":
-        return "0";
+      case "date": return "today";
+      case "quantity": return "100";
+      case "price": return "150.50";
+      case "fees": return "0";
+      case "roc": return "0";
+      case "phantom": return "0";
     }
   };
 
   const getFieldHandler = (f: Field) => {
     switch (f) {
-      case "date":
-        return handleDateSubmit;
-      case "quantity":
-        return handleQuantitySubmit;
-      case "price":
-        return handlePriceSubmit;
-      case "fees":
-        return handleFeesSubmit;
+      case "date": return handleDateSubmit;
+      case "quantity": return handleQuantitySubmit;
+      case "price": return handlePriceSubmit;
+      case "fees": return handleFeesSubmit;
+      case "roc": return handleRocSubmit;
+      case "phantom": return handlePhantomSubmit;
     }
   };
 
   const renderFormField = (f: Field) => {
     const isActive = field === f;
-    const isPending = FIELDS.indexOf(f) > FIELDS.indexOf(field);
+    const isPending = activeFields.indexOf(f) > activeFields.indexOf(field);
     const value = getFieldValue(f);
     const label = getFieldLabel(f).padEnd(LABEL_WIDTH);
 
@@ -275,38 +383,73 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     );
   };
 
+  // Merge transactions and distributions into a unified timeline
+  type TimelineEntry =
+    | { kind: "tx"; date: Date; data: TransactionRow }
+    | { kind: "dist"; date: Date; data: DistributionRow };
+
+  const timeline: TimelineEntry[] = [
+    ...transactions.map((tx): TimelineEntry => ({
+      kind: "tx",
+      date: new Date(tx.date),
+      data: tx,
+    })),
+    ...distributions.map((d): TimelineEntry => ({
+      kind: "dist",
+      date: new Date(d.recordDate),
+      data: d,
+    })),
+  ].sort((a, b) => a.date.getTime() - b.date.getTime());
+
   const visibleRows = getVisibleRowCount();
-  const visibleTransactions = transactions.slice(scrollOffset, scrollOffset + visibleRows);
+  const visibleEntries = timeline.slice(scrollOffset, scrollOffset + visibleRows);
   const hasScrollUp = scrollOffset > 0;
-  const hasScrollDown = scrollOffset + visibleRows < transactions.length;
+  const hasScrollDown = scrollOffset + visibleRows < timeline.length;
 
   const renderTransactionsPanel = () => (
     <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text bold>Transactions</Text>
+      <Text bold>History</Text>
       <Text color="gray">{"─".repeat(28)}</Text>
 
-      {transactions.length === 0 ? (
+      {timeline.length === 0 ? (
         <Text color="gray">No transactions yet</Text>
       ) : (
         <>
           {hasScrollUp && <Text color="gray">  ↑ more</Text>}
-          {visibleTransactions.map((tx) => (
-            <Text key={tx.id}>
-              <Text color="gray">{formatDate(new Date(tx.date))} </Text>
-              {tx.type === "BUY" ? (
-                <Text color="green">BUY </Text>
-              ) : (
-                <Text color="red">SELL</Text>
-              )}
-              <Text> {tx.quantity.toString().padStart(4)} </Text>
-              <Text>{formatCurrency(tx.pricePerShare, stock.currency)}</Text>
-            </Text>
-          ))}
+          {visibleEntries.map((entry) => {
+            if (entry.kind === "tx") {
+              const tx = entry.data;
+              return (
+                <Text key={`tx-${tx.id}`}>
+                  <Text color="gray">{formatDate(entry.date)} </Text>
+                  {tx.type === "BUY" ? (
+                    <Text color="green">BUY </Text>
+                  ) : (
+                    <Text color="red">SELL</Text>
+                  )}
+                  <Text> {tx.quantity.toString().padStart(4)} </Text>
+                  <Text>{formatCurrency(tx.pricePerShare, stock.currency)}</Text>
+                </Text>
+              );
+            } else {
+              const dist = entry.data;
+              const parts: string[] = [];
+              if (dist.rocPerUnit > 0) parts.push(`R:${dist.rocPerUnit.toFixed(4)}`);
+              if (dist.phantomDistPerUnit > 0) parts.push(`P:${dist.phantomDistPerUnit.toFixed(4)}`);
+              return (
+                <Text key={`dist-${dist.id}`}>
+                  <Text color="gray">{formatDate(entry.date)} </Text>
+                  <Text color="magenta">DIST</Text>
+                  <Text> {parts.join(" ")}</Text>
+                </Text>
+              );
+            }
+          })}
           {hasScrollDown && <Text color="gray">  ↓ more</Text>}
         </>
       )}
 
-      {transactions.length > visibleRows && (
+      {timeline.length > visibleRows && (
         <Text color="gray" dimColor>
           [↑/↓] scroll
         </Text>
@@ -332,15 +475,29 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
         >
           {" SELL "}
         </Text>
+        <Text> </Text>
+        <Text
+          color={mode === "DIST" ? "magenta" : "gray"}
+          bold={mode === "DIST"}
+          inverse={mode === "DIST"}
+        >
+          {" DIST "}
+        </Text>
       </Box>
 
       <Box marginTop={1} flexDirection="column">
-        {FIELDS.map(renderFormField)}
+        {activeFields.map(renderFormField)}
       </Box>
 
       {error && (
         <Box marginTop={1}>
           <Text color="red">{error}</Text>
+        </Box>
+      )}
+
+      {syncMessage && (
+        <Box marginTop={1}>
+          <Text color="green">{syncMessage}</Text>
         </Box>
       )}
     </Box>
@@ -402,7 +559,8 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       {/* Footer */}
       <Box marginTop={1}>
         <Text color="gray">
-          [Tab] Buy/Sell · [Shift+Tab] Back · [Enter] Next · [Esc] Exit
+          [Tab] Mode · [Shift+Tab] Back · [Enter] Next · [Esc] Exit
+          {isSupportedTicker(stock.ticker) ? " · [S] Sync distributions" : ""}
         </Text>
       </Box>
     </Box>

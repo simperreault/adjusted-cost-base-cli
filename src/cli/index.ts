@@ -3,6 +3,7 @@ import { buyCommand } from "./commands/buy.ts";
 import { sellCommand } from "./commands/sell.ts";
 import { listCommand } from "./commands/list.ts";
 import { auditCommand } from "./commands/audit.ts";
+import { distributionCommand } from "./commands/distribution.ts";
 
 export function createCLI(): Command {
   const program = new Command();
@@ -16,11 +17,12 @@ export function createCLI(): Command {
   program.addCommand(sellCommand);
   program.addCommand(listCommand);
   program.addCommand(auditCommand);
+  program.addCommand(distributionCommand);
 
   return program;
 }
 
 export function hasInlineCommands(args: string[]): boolean {
-  const commands = ["buy", "sell", "list", "audit"];
+  const commands = ["buy", "sell", "list", "audit", "distribution"];
   return args.some((arg) => commands.includes(arg));
 }
