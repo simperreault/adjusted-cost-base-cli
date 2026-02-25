@@ -8,7 +8,7 @@ type FetchRatesFn = (
   endDate: string
 ) => Promise<ObservationRate[]>;
 
-function formatDate(date: Date): string {
+function toDateString(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
@@ -36,44 +36,49 @@ export class BankOfCanadaExchangeRateProvider implements ExchangeRateProvider {
       return { from, to, rate: 1, date, source: "identity", isEstimate: false };
     }
 
-    const dateStr = formatDate(date);
+    const dateStr = toDateString(date);
     const pair = "FXUSDCAD";
 
-    // Check cache first
-    let cached = this.cache.getClosestRate(pair, dateStr);
-
-    if (!cached || !this.isWithinWindow(cached.date, dateStr)) {
-      // Fetch a 10-day window and cache results
-      const startDate = formatDate(subtractDays(date, 9));
-      try {
-        const rates = await this.fetchRates(startDate, dateStr);
-        if (rates.length > 0) {
-          this.cache.insertRates(
-            rates.map((r) => ({ date: r.date, currencyPair: pair, rate: r.rate }))
-          );
-        }
-      } catch (error) {
-        // If API fails but we have cached data, we'll use it below
-        if (!cached) throw error;
-      }
-
-      cached = this.cache.getClosestRate(pair, dateStr);
+    // Exact cache hit — no fetch needed
+    const exactRate = this.cache.getRate(pair, dateStr);
+    if (exactRate !== null) {
+      return this.buildResult(from, to, exactRate, date, false);
     }
 
-    if (!cached) {
+    // No exact match — fetch 10-day window and cache results
+    const startDate = toDateString(subtractDays(date, 9));
+    try {
+      const rates = await this.fetchRates(startDate, dateStr);
+      if (rates.length > 0) {
+        this.cache.insertRates(
+          rates.map((r) => ({ date: r.date, currencyPair: pair, rate: r.rate }))
+        );
+      }
+    } catch (error) {
+      // If there's no cached data at all, we can't recover
+      const fallback = this.cache.getClosestRate(pair, dateStr);
+      if (!fallback) throw error;
+    }
+
+    const closest = this.cache.getClosestRate(pair, dateStr);
+    if (!closest) {
       throw new Error(
         `No exchange rate available for ${from}→${to} on ${dateStr}`
       );
     }
 
-    // It's an estimate only if the closest rate is older than the 10-day window
-    const isEstimate = !this.isWithinWindow(cached.date, dateStr);
-    let rate = cached.rate;
+    const isEstimate = !this.isWithinWindow(closest.date, dateStr);
+    return this.buildResult(from, to, closest.rate, date, isEstimate);
+  }
 
-    if (from === "CAD" && to === "USD") {
-      rate = 1 / rate;
-    }
-
+  private buildResult(
+    from: Currency,
+    to: Currency,
+    usdCadRate: number,
+    date: Date,
+    isEstimate: boolean
+  ): ExchangeRate {
+    const rate = from === "CAD" && to === "USD" ? 1 / usdCadRate : usdCadRate;
     return {
       from,
       to,
@@ -85,8 +90,8 @@ export class BankOfCanadaExchangeRateProvider implements ExchangeRateProvider {
   }
 
   private isWithinWindow(cachedDate: string, requestedDate: string): boolean {
-    const cached = new Date(cachedDate + "T00:00:00");
-    const requested = new Date(requestedDate + "T00:00:00");
+    const cached = new Date(cachedDate + "T00:00:00Z");
+    const requested = new Date(requestedDate + "T00:00:00Z");
     const diffMs = requested.getTime() - cached.getTime();
     const diffDays = diffMs / (1000 * 60 * 60 * 24);
     return diffDays <= 9;

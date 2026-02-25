@@ -6,10 +6,21 @@ import { correctEstimateTransactions } from "../../../src/services/exchangeRate/
 import type { ExchangeRateProvider } from "../../../src/services/exchangeRate/types.ts";
 import type { Currency } from "../../../src/types/index.ts";
 
+function toDateString(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function localDate(year: number, month: number, day: number): Date {
+  return new Date(year, month - 1, day);
+}
+
 function createMockProvider(rateMap: Record<string, number>): ExchangeRateProvider {
   return {
     async getRate(from: Currency, to: Currency, date: Date) {
-      const dateStr = date.toISOString().split("T")[0] ?? "";
+      const dateStr = toDateString(date);
       const rate = rateMap[dateStr];
       if (rate === undefined) {
         return {
@@ -45,25 +56,22 @@ describe("correctEstimateTransactions", () => {
       currency: "USD",
     });
 
-    // Create a transaction with an estimated rate
     txRepo.create({
       stockId: stock.id,
       type: "BUY",
-      date: new Date("2025-01-15"),
+      date: localDate(2025, 1, 15),
       quantity: 10,
       pricePerShare: 100,
-      pricePerShareCad: 100 * 1.40, // estimated rate
+      pricePerShareCad: 100 * 1.40,
       exchangeRate: 1.40,
       fees: 5,
       feesCad: 5 * 1.40,
       exchangeRateIsEstimate: true,
     });
 
-    // Real rate is now available
     const provider = createMockProvider({ "2025-01-15": 1.44 });
     await correctEstimateTransactions(db, provider);
 
-    // Verify the transaction was corrected
     const txs = txRepo.findByStockId(stock.id);
     expect(txs).toHaveLength(1);
     const tx = txs[0]!;
@@ -72,11 +80,9 @@ describe("correctEstimateTransactions", () => {
     expect(tx.feesCad).toBeCloseTo(7.2, 2);
     expect(tx.exchangeRateIsEstimate).toBe(0);
 
-    // Verify snapshot was rebuilt
     const snapshot = txRepo.getLatestSnapshot(stock.id);
     expect(snapshot).toBeDefined();
     expect(snapshot!.totalShares).toBe(10);
-    // totalCost = 10 * 144 + 7.2 = 1447.2
     expect(snapshot!.totalCostCad).toBeCloseTo(1447.2, 1);
   });
 
@@ -94,7 +100,7 @@ describe("correctEstimateTransactions", () => {
     txRepo.create({
       stockId: stock.id,
       type: "BUY",
-      date: new Date("2025-01-15"),
+      date: localDate(2025, 1, 15),
       quantity: 10,
       pricePerShare: 100,
       pricePerShareCad: 100 * 1.40,
@@ -104,7 +110,6 @@ describe("correctEstimateTransactions", () => {
       exchangeRateIsEstimate: true,
     });
 
-    // Provider still returns estimate
     const provider = createMockProvider({});
     await correctEstimateTransactions(db, provider);
 
@@ -127,7 +132,7 @@ describe("correctEstimateTransactions", () => {
     txRepo.create({
       stockId: stock.id,
       type: "BUY",
-      date: new Date("2025-01-15"),
+      date: localDate(2025, 1, 15),
       quantity: 10,
       pricePerShare: 100,
       pricePerShareCad: 144,
@@ -140,7 +145,6 @@ describe("correctEstimateTransactions", () => {
     const provider = createMockProvider({ "2025-01-15": 1.44 });
     await correctEstimateTransactions(db, provider);
 
-    // Transaction unchanged
     const txs = txRepo.findByStockId(stock.id);
     expect(txs[0]!.exchangeRate).toBe(1.44);
   });
@@ -156,11 +160,10 @@ describe("correctEstimateTransactions", () => {
       currency: "USD",
     });
 
-    // First buy with correct rate
     txRepo.create({
       stockId: stock.id,
       type: "BUY",
-      date: new Date("2025-01-13"),
+      date: localDate(2025, 1, 13),
       quantity: 10,
       pricePerShare: 100,
       pricePerShareCad: 143,
@@ -170,11 +173,10 @@ describe("correctEstimateTransactions", () => {
       exchangeRateIsEstimate: false,
     });
 
-    // Second buy with estimated rate
     txRepo.create({
       stockId: stock.id,
       type: "BUY",
-      date: new Date("2025-01-15"),
+      date: localDate(2025, 1, 15),
       quantity: 10,
       pricePerShare: 100,
       pricePerShareCad: 140,
@@ -187,11 +189,67 @@ describe("correctEstimateTransactions", () => {
     const provider = createMockProvider({ "2025-01-15": 1.44 });
     await correctEstimateTransactions(db, provider);
 
-    // Final snapshot should reflect corrected rate
     const snapshot = txRepo.getLatestSnapshot(stock.id);
     expect(snapshot!.totalShares).toBe(20);
-    // totalCost = 10*143 + 10*144 = 1430 + 1440 = 2870
     expect(snapshot!.totalCostCad).toBeCloseTo(2870, 1);
     expect(snapshot!.acbPerShare).toBeCloseTo(143.5, 1);
+  });
+
+  test("corrects sell transaction and recalculates capital gains", async () => {
+    const db = createInMemoryDatabase();
+    const stockRepo = createStockRepository(db);
+    const txRepo = createTransactionRepository(db);
+
+    const stock = stockRepo.create({
+      name: "Apple",
+      ticker: "AAPL",
+      currency: "USD",
+    });
+
+    // Buy with correct rate
+    txRepo.create({
+      stockId: stock.id,
+      type: "BUY",
+      date: localDate(2025, 1, 10),
+      quantity: 100,
+      pricePerShare: 10,
+      pricePerShareCad: 14.3,
+      exchangeRate: 1.43,
+      fees: 0,
+      feesCad: 0,
+      exchangeRateIsEstimate: false,
+    });
+
+    // Sell with estimated rate
+    txRepo.create({
+      stockId: stock.id,
+      type: "SELL",
+      date: localDate(2025, 1, 15),
+      quantity: 50,
+      pricePerShare: 15,
+      pricePerShareCad: 15 * 1.40,
+      exchangeRate: 1.40,
+      fees: 5,
+      feesCad: 5 * 1.40,
+      exchangeRateIsEstimate: true,
+    });
+
+    const provider = createMockProvider({ "2025-01-15": 1.44 });
+    await correctEstimateTransactions(db, provider);
+
+    // Verify sell transaction was corrected
+    const txs = txRepo.findByStockId(stock.id);
+    const sellTx = txs.find((t) => t.type === "SELL")!;
+    expect(sellTx.exchangeRate).toBe(1.44);
+    expect(sellTx.pricePerShareCad).toBeCloseTo(21.6, 2);
+    expect(sellTx.feesCad).toBeCloseTo(7.2, 2);
+
+    // Verify capital gain was recalculated
+    // Proceeds = 50 * 21.6 - 7.2 = 1072.8
+    // Cost of shares sold = 50 * 14.3 = 715
+    // Capital gain = 1072.8 - 715 = 357.8
+    const snapshot = txRepo.getLatestSnapshot(stock.id);
+    expect(snapshot!.totalShares).toBe(50);
+    expect(snapshot!.realizedGainCad).toBeCloseTo(357.8, 1);
   });
 });

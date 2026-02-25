@@ -17,10 +17,15 @@ function createProvider(
   return { provider, cache, fetchFn };
 }
 
+// Use local Date constructors to match how parseDate() creates dates
+function localDate(year: number, month: number, day: number): Date {
+  return new Date(year, month - 1, day);
+}
+
 describe("BankOfCanadaExchangeRateProvider", () => {
   test("same currency returns rate 1, no API call", async () => {
     const { provider, fetchFn } = createProvider();
-    const result = await provider.getRate("CAD", "CAD", new Date("2025-01-15"));
+    const result = await provider.getRate("CAD", "CAD", localDate(2025, 1, 15));
 
     expect(result.rate).toBe(1);
     expect(result.isEstimate).toBe(false);
@@ -36,7 +41,7 @@ describe("BankOfCanadaExchangeRateProvider", () => {
     const fetchFn = mock(async () => []) as (start: string, end: string) => Promise<ObservationRate[]>;
     const provider = new BankOfCanadaExchangeRateProvider(cache, fetchFn);
 
-    const result = await provider.getRate("USD", "CAD", new Date("2025-01-15"));
+    const result = await provider.getRate("USD", "CAD", localDate(2025, 1, 15));
 
     expect(result.rate).toBe(1.44);
     expect(result.isEstimate).toBe(false);
@@ -50,7 +55,7 @@ describe("BankOfCanadaExchangeRateProvider", () => {
       { date: "2025-01-15", rate: 1.44 },
     ]);
 
-    const result = await provider.getRate("USD", "CAD", new Date("2025-01-15"));
+    const result = await provider.getRate("USD", "CAD", localDate(2025, 1, 15));
 
     expect(result.rate).toBe(1.44);
     expect(result.isEstimate).toBe(false);
@@ -64,7 +69,7 @@ describe("BankOfCanadaExchangeRateProvider", () => {
     ]);
 
     // Saturday Jan 11
-    const result = await provider.getRate("USD", "CAD", new Date("2025-01-11"));
+    const result = await provider.getRate("USD", "CAD", localDate(2025, 1, 11));
 
     expect(result.rate).toBe(1.43);
     expect(result.isEstimate).toBe(false);
@@ -75,7 +80,7 @@ describe("BankOfCanadaExchangeRateProvider", () => {
       { date: "2025-01-15", rate: 1.44 },
     ]);
 
-    const result = await provider.getRate("CAD", "USD", new Date("2025-01-15"));
+    const result = await provider.getRate("CAD", "USD", localDate(2025, 1, 15));
 
     expect(result.rate).toBeCloseTo(1 / 1.44, 10);
     expect(result.from).toBe("CAD");
@@ -83,7 +88,6 @@ describe("BankOfCanadaExchangeRateProvider", () => {
   });
 
   test("future date with no rate sets isEstimate", async () => {
-    // Only return old rates — nothing within the 10-day window
     const cache = createInMemoryExchangeRateCache();
     cache.insertRates([
       { date: "2025-01-01", currencyPair: "FXUSDCAD", rate: 1.40 },
@@ -91,7 +95,7 @@ describe("BankOfCanadaExchangeRateProvider", () => {
     const fetchFn = mock(async () => []) as (start: string, end: string) => Promise<ObservationRate[]>;
     const provider = new BankOfCanadaExchangeRateProvider(cache, fetchFn);
 
-    const result = await provider.getRate("USD", "CAD", new Date("2025-01-15"));
+    const result = await provider.getRate("USD", "CAD", localDate(2025, 1, 15));
 
     expect(result.rate).toBe(1.40);
     expect(result.isEstimate).toBe(true);
@@ -109,7 +113,7 @@ describe("BankOfCanadaExchangeRateProvider", () => {
     }) as unknown as (start: string, end: string) => Promise<ObservationRate[]>;
     const provider = new BankOfCanadaExchangeRateProvider(cache, fetchFn);
 
-    const result = await provider.getRate("USD", "CAD", new Date("2025-01-15"));
+    const result = await provider.getRate("USD", "CAD", localDate(2025, 1, 15));
 
     expect(result.rate).toBe(1.44);
     expect(result.isEstimate).toBe(false);
@@ -120,7 +124,20 @@ describe("BankOfCanadaExchangeRateProvider", () => {
     const { provider } = createProvider([], true);
 
     await expect(
-      provider.getRate("USD", "CAD", new Date("2025-01-15"))
+      provider.getRate("USD", "CAD", localDate(2025, 1, 15))
     ).rejects.toThrow("Network error");
+  });
+
+  test("late-night date uses correct local calendar day", async () => {
+    // Simulate 11 PM on Jan 15 local time (which is Jan 16 UTC in EST)
+    const lateNight = new Date(2025, 0, 15, 23, 0, 0);
+    const { provider } = createProvider([
+      { date: "2025-01-15", rate: 1.44 },
+    ]);
+
+    const result = await provider.getRate("USD", "CAD", lateNight);
+
+    expect(result.rate).toBe(1.44);
+    expect(result.isEstimate).toBe(false);
   });
 });
