@@ -77,6 +77,15 @@ function initializeSchema(sqlite: Database): void {
     CREATE INDEX IF NOT EXISTS idx_stock_snapshots_stock_id ON stock_snapshots(stock_id);
     CREATE INDEX IF NOT EXISTS idx_stock_snapshots_transaction_id ON stock_snapshots(transaction_id);
   `);
+
+  // Migration: add exchange_rate_is_estimate column
+  try {
+    sqlite.exec(
+      "ALTER TABLE transactions ADD COLUMN exchange_rate_is_estimate INTEGER NOT NULL DEFAULT 0"
+    );
+  } catch {
+    // Column already exists — safe to ignore
+  }
 }
 
 export function createInMemoryDatabase(): AppDatabase {

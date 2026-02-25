@@ -23,6 +23,7 @@ export interface CreateTransactionInput {
   exchangeRate: number;
   fees: number;
   feesCad: number;
+  exchangeRateIsEstimate?: boolean;
 }
 
 export interface TransactionWithSnapshot {
@@ -73,6 +74,7 @@ export function createTransactionRepository(db: AppDatabase) {
           exchangeRate: data.exchangeRate,
           fees: data.fees,
           feesCad: data.feesCad,
+          exchangeRateIsEstimate: data.exchangeRateIsEstimate ? 1 : 0,
           createdAt: new Date(),
         })
         .returning()
@@ -149,7 +151,7 @@ export function createTransactionRepository(db: AppDatabase) {
         .select()
         .from(stockSnapshots)
         .where(eq(stockSnapshots.stockId, stockId))
-        .orderBy(desc(stockSnapshots.calculatedAt))
+        .orderBy(desc(stockSnapshots.calculatedAt), desc(stockSnapshots.id))
         .limit(1)
         .get();
     },

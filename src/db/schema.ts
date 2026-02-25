@@ -23,6 +23,9 @@ export const transactions = sqliteTable("transactions", {
   exchangeRate: real("exchange_rate").notNull().default(1),
   fees: real("fees").notNull().default(0),
   feesCad: real("fees_cad").notNull().default(0),
+  exchangeRateIsEstimate: integer("exchange_rate_is_estimate")
+    .notNull()
+    .default(0),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),

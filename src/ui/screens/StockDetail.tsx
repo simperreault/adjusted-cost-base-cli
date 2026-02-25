@@ -8,8 +8,8 @@ import { formatCurrency } from "../../utils/currency.ts";
 import { formatDate, parseDate } from "../../utils/date.ts";
 import { validatePrice, validateQuantity } from "../../core/validation.ts";
 import {
-  HardcodedExchangeRateProvider,
-  EXCHANGE_RATE_WARNING,
+  getExchangeRateProvider,
+  type ExchangeRate,
 } from "../../services/exchangeRate/index.ts";
 import type { TransactionRow, StockSnapshotRow } from "../../db/schema.ts";
 
@@ -44,6 +44,9 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   const [field, setField] = useState<Field>("date");
   const [error, setError] = useState<string | null>(null);
   const [formKey, setFormKey] = useState(0);
+
+  // Exchange rate state (fetched after date is entered for USD stocks)
+  const [exchangeRate, setExchangeRate] = useState<ExchangeRate | null>(null);
 
   const txRepo = createTransactionRepository(db);
 
@@ -109,10 +112,11 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     setFees("");
     setField("date");
     setError(null);
+    setExchangeRate(null);
     setFormKey((k) => k + 1);
   };
 
-  const handleDateSubmit = (value: string) => {
+  const handleDateSubmit = async (value: string) => {
     const dateValue = value.trim() === "" ? "today" : value;
     const parsed = parseDate(dateValue);
     if (!parsed) {
@@ -121,6 +125,18 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     }
     setDate(formatDate(parsed));
     setError(null);
+
+    // Fetch exchange rate for USD stocks
+    if (stock.currency === "USD") {
+      try {
+        const rate = await getExchangeRateProvider().getRate("USD", "CAD", parsed);
+        setExchangeRate(rate);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to fetch exchange rate");
+        return;
+      }
+    }
+
     setField("quantity");
   };
 
@@ -173,8 +189,8 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     }
 
     try {
-      const exchangeProvider = new HardcodedExchangeRateProvider();
-      const exchangeRate = await exchangeProvider.getRate(
+      // Use already-fetched rate for USD stocks, or fetch for CAD
+      const rate = exchangeRate ?? await getExchangeRateProvider().getRate(
         stock.currency,
         "CAD",
         dateResult
@@ -186,10 +202,11 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
         date: dateResult,
         quantity: qtyResult.value,
         pricePerShare: priceResult.value,
-        pricePerShareCad: priceResult.value * exchangeRate.rate,
-        exchangeRate: exchangeRate.rate,
+        pricePerShareCad: priceResult.value * rate.rate,
+        exchangeRate: rate.rate,
         fees: feeResult.value,
-        feesCad: feeResult.value * exchangeRate.rate,
+        feesCad: feeResult.value * rate.rate,
+        exchangeRateIsEstimate: rate.isEstimate,
       });
 
       resetForm();
@@ -251,25 +268,54 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     }
   };
 
+  const getCadConversion = (f: Field): string | null => {
+    if (stock.currency !== "USD" || !exchangeRate) return null;
+    const value = getFieldValue(f);
+    if (!value) return null;
+
+    const num = parseFloat(value);
+    if (isNaN(num) || num <= 0) return null;
+
+    const cad = num * exchangeRate.rate;
+    return formatCurrency(cad, "CAD");
+  };
+
   const renderFormField = (f: Field) => {
     const isActive = field === f;
     const isPending = FIELDS.indexOf(f) > FIELDS.indexOf(field);
     const value = getFieldValue(f);
     const label = getFieldLabel(f).padEnd(LABEL_WIDTH);
+    const cadConversion = (f === "price" || f === "fees") ? getCadConversion(f) : null;
 
     return (
-      <Box key={f}>
-        <Text color={isActive ? "cyan" : "gray"}>{label}</Text>
-        {isActive ? (
-          <TextInput
-            key={`${formKey}-${f}`}
-            placeholder={getFieldPlaceholder(f)}
-            onSubmit={getFieldHandler(f)}
-          />
-        ) : isPending ? (
-          <Text color="gray">—</Text>
-        ) : (
-          <Text>{value}</Text>
+      <Box key={f} flexDirection="column">
+        <Box>
+          <Text color={isActive ? "cyan" : "gray"}>{label}</Text>
+          {isActive ? (
+            <TextInput
+              key={`${formKey}-${f}`}
+              placeholder={getFieldPlaceholder(f)}
+              onSubmit={getFieldHandler(f)}
+            />
+          ) : isPending ? (
+            <Text color="gray">—</Text>
+          ) : (
+            <Text>
+              {value}
+              {cadConversion && !isActive && (
+                <Text color="gray">{`  → ${cadConversion}`}</Text>
+              )}
+            </Text>
+          )}
+        </Box>
+        {f === "date" && exchangeRate && !isPending && (
+          <Box>
+            <Text color="gray">{"".padEnd(LABEL_WIDTH)}</Text>
+            <Text color={exchangeRate.isEstimate ? "yellow" : "gray"}>
+              {`1 USD = ${exchangeRate.rate.toFixed(4)} CAD`}
+              {exchangeRate.isEstimate ? " (estimate)" : ""}
+            </Text>
+          </Box>
         )}
       </Box>
     );
@@ -378,9 +424,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
         )}
 
         {stock.currency === "USD" && (
-          <Text color="yellow" wrap="wrap">
-            {EXCHANGE_RATE_WARNING}
-          </Text>
+          <Text color="gray">USD rates from Bank of Canada</Text>
         )}
       </Box>
 

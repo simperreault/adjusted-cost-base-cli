@@ -17,6 +17,10 @@ export function getUserDatabasePath(username: string): string {
   return join(getUsersDirectory(), `${username}.db`);
 }
 
+export function getExchangeRateDatabasePath(): string {
+  return join(getDataDirectory(), "exchange_rates.db");
+}
+
 export function ensureDirectoryExists(dirPath: string): void {
   if (!existsSync(dirPath)) {
     mkdirSync(dirPath, { recursive: true });

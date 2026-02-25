@@ -5,7 +5,7 @@ import { formatCurrency } from "../../utils/currency.ts";
 import { openUserDatabase } from "../../services/userService.ts";
 import { createStockRepository } from "../../db/repositories/stockRepository.ts";
 import { createTransactionRepository } from "../../db/repositories/transactionRepository.ts";
-import { HardcodedExchangeRateProvider, EXCHANGE_RATE_WARNING } from "../../services/exchangeRate/index.ts";
+import { getExchangeRateProvider } from "../../services/exchangeRate/index.ts";
 
 export const buyCommand = new Command("buy")
   .description("Record a buy transaction")
@@ -51,8 +51,7 @@ export const buyCommand = new Command("buy")
         process.exit(1);
       }
 
-      const exchangeProvider = new HardcodedExchangeRateProvider();
-      const exchangeRate = await exchangeProvider.getRate(stock.currency, "CAD", date);
+      const exchangeRate = await getExchangeRateProvider().getRate(stock.currency, "CAD", date);
 
       const pricePerShareCad = txResult.value.price * exchangeRate.rate;
       const feesCad = fees * exchangeRate.rate;
@@ -67,6 +66,7 @@ export const buyCommand = new Command("buy")
         exchangeRate: exchangeRate.rate,
         fees,
         feesCad,
+        exchangeRateIsEstimate: exchangeRate.isEstimate,
       });
 
       console.log(`\nBuy recorded for ${stock.ticker}:`);
@@ -84,7 +84,9 @@ export const buyCommand = new Command("buy")
       console.log(`Total cost: ${formatCurrency(snapshot.totalCostCad, "CAD")}`);
 
       if (exchangeRate.isEstimate) {
-        console.log(`\n⚠️  ${EXCHANGE_RATE_WARNING}`);
+        console.log(
+          `\n⚠️  Exchange rate is an estimate (rate not yet published for this date). It will be auto-corrected on next use.`
+        );
       }
     } catch (error) {
       console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
