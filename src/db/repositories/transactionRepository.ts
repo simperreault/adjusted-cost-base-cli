@@ -9,9 +9,8 @@ import {
 import {
   calculateAcbAfterBuy,
   calculateAcbAfterSell,
-  getInitialAcbState,
-  recalculateAcbFromTransactions,
 } from "../../core/acb.ts";
+import { resolveAcbState } from "./acbStateResolver.ts";
 
 export interface CreateTransactionInput {
   stockId: number;
@@ -33,14 +32,8 @@ export interface TransactionWithSnapshot {
 export function createTransactionRepository(db: AppDatabase) {
   return {
     create(data: CreateTransactionInput): TransactionWithSnapshot {
-      const currentSnapshot = this.getLatestSnapshot(data.stockId);
-      const currentState = currentSnapshot
-        ? {
-            totalShares: currentSnapshot.totalShares,
-            totalCostCad: currentSnapshot.totalCostCad,
-            acbPerShare: currentSnapshot.acbPerShare,
-          }
-        : getInitialAcbState();
+      // Replay full event history (transactions + distributions) for correct state
+      const currentState = resolveAcbState(db, data.stockId);
 
       let newState;
       let realizedGain: number | null = null;
@@ -92,22 +85,8 @@ export function createTransactionRepository(db: AppDatabase) {
         .returning()
         .get();
 
-      // Dual-path verification: replay full history and compare
-      const allTransactions = db
-        .select()
-        .from(transactions)
-        .where(eq(transactions.stockId, data.stockId))
-        .orderBy(transactions.date, transactions.createdAt)
-        .all();
-
-      const replayState = recalculateAcbFromTransactions(
-        allTransactions.map((tx) => ({
-          type: tx.type as "BUY" | "SELL",
-          quantity: tx.quantity,
-          pricePerShareCad: tx.pricePerShareCad,
-          feesCad: tx.feesCad,
-        }))
-      );
+      // Dual-path verification: replay full history (transactions + distributions)
+      const replayState = resolveAcbState(db, data.stockId);
 
       const TOLERANCE = 0.01;
       if (

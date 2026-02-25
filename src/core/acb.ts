@@ -197,6 +197,7 @@ export function recalculateAcbFromEvents(events: AcbEvent[]): ACBState {
     }
   }
 
+  assertACBState(state, { operation: "recalculateFromEvents", eventCount: events.length });
   return state;
 }
 

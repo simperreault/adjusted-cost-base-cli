@@ -3,17 +3,12 @@ import type { AppDatabase } from "../index.ts";
 import {
   distributions,
   distributionSnapshots,
-  stockSnapshots,
   type DistributionRow,
   type DistributionSnapshotRow,
-  type StockSnapshotRow,
 } from "../schema.ts";
-import {
-  calculateAcbAfterDistribution,
-  getInitialAcbState,
-} from "../../core/acb.ts";
-import type { ACBState } from "../../types/index.ts";
+import { calculateAcbAfterDistribution } from "../../core/acb.ts";
 import { getBundledDistributions } from "../../../data/distributions/index.ts";
+import { resolveAcbState } from "./acbStateResolver.ts";
 
 export interface CreateDistributionInput {
   stockId: number;
@@ -29,66 +24,11 @@ export interface DistributionWithSnapshot {
   snapshot: DistributionSnapshotRow;
 }
 
-/**
- * Gets the latest ACB state for a stock by checking both transaction snapshots
- * and distribution snapshots, returning whichever is most recent.
- */
-export function getLatestAcbState(
-  db: AppDatabase,
-  stockId: number
-): ACBState {
-  const latestTxSnapshot: StockSnapshotRow | undefined = db
-    .select()
-    .from(stockSnapshots)
-    .where(eq(stockSnapshots.stockId, stockId))
-    .orderBy(desc(stockSnapshots.calculatedAt))
-    .limit(1)
-    .get();
-
-  const latestDistSnapshot: DistributionSnapshotRow | undefined = db
-    .select()
-    .from(distributionSnapshots)
-    .where(eq(distributionSnapshots.stockId, stockId))
-    .orderBy(desc(distributionSnapshots.calculatedAt))
-    .limit(1)
-    .get();
-
-  if (!latestTxSnapshot && !latestDistSnapshot) {
-    return getInitialAcbState();
-  }
-
-  if (!latestDistSnapshot) {
-    return {
-      totalShares: latestTxSnapshot!.totalShares,
-      totalCostCad: latestTxSnapshot!.totalCostCad,
-      acbPerShare: latestTxSnapshot!.acbPerShare,
-    };
-  }
-
-  if (!latestTxSnapshot) {
-    return {
-      totalShares: latestDistSnapshot.totalShares,
-      totalCostCad: latestDistSnapshot.totalCostCad,
-      acbPerShare: latestDistSnapshot.acbPerShare,
-    };
-  }
-
-  // Return whichever is more recent
-  const txTime = latestTxSnapshot.calculatedAt.getTime();
-  const distTime = latestDistSnapshot.calculatedAt.getTime();
-  const latest = distTime > txTime ? latestDistSnapshot : latestTxSnapshot;
-
-  return {
-    totalShares: latest.totalShares,
-    totalCostCad: latest.totalCostCad,
-    acbPerShare: latest.acbPerShare,
-  };
-}
-
 export function createDistributionRepository(db: AppDatabase) {
   return {
     create(data: CreateDistributionInput): DistributionWithSnapshot {
-      const currentState = getLatestAcbState(db, data.stockId);
+      // Replay full event history for correct pre-distribution state
+      const currentState = resolveAcbState(db, data.stockId);
 
       const result = calculateAcbAfterDistribution(currentState, {
         rocPerUnit: data.rocPerUnit,
@@ -124,6 +64,22 @@ export function createDistributionRepository(db: AppDatabase) {
         })
         .returning()
         .get();
+
+      // Dual-path verification: replay full history (transactions + distributions)
+      const replayState = resolveAcbState(db, data.stockId);
+
+      const TOLERANCE = 0.01;
+      if (
+        Math.abs(replayState.totalShares - snapshot.totalShares) > TOLERANCE ||
+        Math.abs(replayState.totalCostCad - snapshot.totalCostCad) > TOLERANCE ||
+        Math.abs(replayState.acbPerShare - snapshot.acbPerShare) > TOLERANCE
+      ) {
+        throw new Error(
+          `ACB verification failed after distribution: incremental and replay paths disagree. ` +
+          `Snapshot: ${JSON.stringify({ totalShares: snapshot.totalShares, totalCostCad: snapshot.totalCostCad, acbPerShare: snapshot.acbPerShare })} ` +
+          `Replay: ${JSON.stringify(replayState)}`
+        );
+      }
 
       return { distribution, snapshot };
     },
