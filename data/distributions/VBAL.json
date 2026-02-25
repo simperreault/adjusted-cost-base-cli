@@ -1,0 +1,46 @@
+{
+  "ticker": "VBAL",
+  "name": "Vanguard Balanced ETF Portfolio",
+  "provider": "Vanguard",
+  "currency": "CAD",
+  "lastUpdated": "2025-12-30",
+  "notes": "Phantom distribution values sourced from Vanguard Canada press releases (GlobeNewsWire/Newswire.ca). ROC values sourced from CDS tax breakdown reports where available; these ETFs historically have very low ROC (0-1.3% of NAV).",
+  "distributions": [
+    {
+      "recordDate": "2020-12-31",
+      "rocPerUnit": 0,
+      "phantomDistPerUnit": 0.114319,
+      "source": "Vanguard press release"
+    },
+    {
+      "recordDate": "2021-12-31",
+      "rocPerUnit": 0,
+      "phantomDistPerUnit": 0.289588,
+      "source": "Vanguard press release"
+    },
+    {
+      "recordDate": "2022-12-30",
+      "rocPerUnit": 0,
+      "phantomDistPerUnit": 0.2147,
+      "source": "Vanguard press release"
+    },
+    {
+      "recordDate": "2023-12-29",
+      "rocPerUnit": 0,
+      "phantomDistPerUnit": 0.121806,
+      "source": "Vanguard press release"
+    },
+    {
+      "recordDate": "2024-12-30",
+      "rocPerUnit": 0,
+      "phantomDistPerUnit": 0.337068,
+      "source": "Vanguard press release"
+    },
+    {
+      "recordDate": "2025-12-30",
+      "rocPerUnit": 0,
+      "phantomDistPerUnit": 0.43024,
+      "source": "Vanguard press release"
+    }
+  ]
+}

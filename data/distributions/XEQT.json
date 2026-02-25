@@ -1,0 +1,46 @@
+{
+  "ticker": "XEQT",
+  "name": "iShares Core Equity ETF Portfolio",
+  "provider": "BlackRock",
+  "currency": "CAD",
+  "lastUpdated": "2025-12-30",
+  "notes": "Phantom distribution values sourced from BlackRock Canada press releases (GlobeNewsWire). ROC values sourced from CDS tax breakdown reports where available; these ETFs historically have very low ROC (0-1.3% of NAV).",
+  "distributions": [
+    {
+      "recordDate": "2020-12-31",
+      "rocPerUnit": 0,
+      "phantomDistPerUnit": 0,
+      "source": "BlackRock press release"
+    },
+    {
+      "recordDate": "2021-12-31",
+      "rocPerUnit": 0,
+      "phantomDistPerUnit": 0.14007,
+      "source": "BlackRock press release"
+    },
+    {
+      "recordDate": "2022-12-30",
+      "rocPerUnit": 0,
+      "phantomDistPerUnit": 0.29106,
+      "source": "BlackRock press release"
+    },
+    {
+      "recordDate": "2023-12-29",
+      "rocPerUnit": 0,
+      "phantomDistPerUnit": 0,
+      "source": "BlackRock press release"
+    },
+    {
+      "recordDate": "2024-12-30",
+      "rocPerUnit": 0,
+      "phantomDistPerUnit": 0,
+      "source": "BlackRock press release"
+    },
+    {
+      "recordDate": "2025-12-30",
+      "rocPerUnit": 0,
+      "phantomDistPerUnit": 0.32215,
+      "source": "BlackRock press release"
+    }
+  ]
+}
