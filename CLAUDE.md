@@ -39,3 +39,16 @@ Single test file: `bun test tests/core/acb.test.ts`
 - All monetary values stored in both original currency and CAD
 - ACB recalculation: `recalculateAcbFromTransactions()` can rebuild state from transaction history
 - Database connections created per-user via `createDatabaseConnection({ username })`
+
+## Validation
+
+After making code changes, run both of these in the background:
+- `bun run typecheck 2>&1 | head -50`
+- `bun test 2>&1 | head -80`
+
+## Setup
+
+After cloning, configure git to use the committed hooks:
+```bash
+git config core.hooksPath .githooks
+```

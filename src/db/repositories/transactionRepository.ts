@@ -10,6 +10,7 @@ import {
   calculateAcbAfterBuy,
   calculateAcbAfterSell,
   getInitialAcbState,
+  recalculateAcbFromTransactions,
 } from "../../core/acb.ts";
 
 export interface CreateTransactionInput {
@@ -90,6 +91,36 @@ export function createTransactionRepository(db: AppDatabase) {
         })
         .returning()
         .get();
+
+      // Dual-path verification: replay full history and compare
+      const allTransactions = db
+        .select()
+        .from(transactions)
+        .where(eq(transactions.stockId, data.stockId))
+        .orderBy(transactions.date, transactions.createdAt)
+        .all();
+
+      const replayState = recalculateAcbFromTransactions(
+        allTransactions.map((tx) => ({
+          type: tx.type as "BUY" | "SELL",
+          quantity: tx.quantity,
+          pricePerShareCad: tx.pricePerShareCad,
+          feesCad: tx.feesCad,
+        }))
+      );
+
+      const TOLERANCE = 0.01;
+      if (
+        Math.abs(replayState.totalShares - snapshot.totalShares) > TOLERANCE ||
+        Math.abs(replayState.totalCostCad - snapshot.totalCostCad) > TOLERANCE ||
+        Math.abs(replayState.acbPerShare - snapshot.acbPerShare) > TOLERANCE
+      ) {
+        throw new Error(
+          `ACB verification failed: incremental and replay paths disagree. ` +
+          `Snapshot: ${JSON.stringify({ totalShares: snapshot.totalShares, totalCostCad: snapshot.totalCostCad, acbPerShare: snapshot.acbPerShare })} ` +
+          `Replay: ${JSON.stringify(replayState)}`
+        );
+      }
 
       return { transaction, snapshot };
     },
