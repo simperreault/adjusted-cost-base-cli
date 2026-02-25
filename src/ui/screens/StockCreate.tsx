@@ -5,7 +5,6 @@ import type { AppDatabase } from "../../db/index.ts";
 import { createStockRepository } from "../../db/repositories/stockRepository.ts";
 import { validateTicker } from "../../core/validation.ts";
 import type { Stock, Currency } from "../../types/index.ts";
-import { EXCHANGE_RATE_WARNING } from "../../services/exchangeRate/index.ts";
 
 interface StockCreateProps {
   db: AppDatabase;
@@ -123,8 +122,8 @@ export function StockCreate({ db, onCreated, onCancel }: StockCreateProps) {
               onChange={handleCurrencySelect}
             />
             <Box marginTop={1}>
-              <Text color="yellow" wrap="wrap">
-                Note: {EXCHANGE_RATE_WARNING}
+              <Text color="gray" wrap="wrap">
+                Note: USD transactions use daily Bank of Canada exchange rates.
               </Text>
             </Box>
           </Box>

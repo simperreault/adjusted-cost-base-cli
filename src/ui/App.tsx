@@ -6,6 +6,8 @@ import { Portfolio } from "./screens/Portfolio.tsx";
 import { StockCreate } from "./screens/StockCreate.tsx";
 import { StockDetail } from "./screens/StockDetail.tsx";
 import { openUserDatabase, createUser } from "../services/userService.ts";
+import { getExchangeRateProvider } from "../services/exchangeRate/index.ts";
+import { correctEstimateTransactions } from "../services/exchangeRate/correctEstimates.ts";
 import type { AppDatabase } from "../db/index.ts";
 import type { Stock } from "../types/index.ts";
 
@@ -39,6 +41,7 @@ export function App({ initialUser }: AppProps) {
         try {
           const database = createUser(user);
           setDb(database);
+          correctEstimateTransactions(database, getExchangeRateProvider()).catch(() => {});
           setScreen("portfolio");
         } catch (e) {
           setError(e instanceof Error ? e.message : "Failed to create user");
@@ -49,6 +52,7 @@ export function App({ initialUser }: AppProps) {
         try {
           const database = openUserDatabase(user);
           setDb(database);
+          correctEstimateTransactions(database, getExchangeRateProvider()).catch(() => {});
           setScreen("portfolio");
         } catch (e) {
           setError(e instanceof Error ? e.message : "Failed to open database");
@@ -65,6 +69,7 @@ export function App({ initialUser }: AppProps) {
       try {
         const database = openUserDatabase(username, password);
         setDb(database);
+        correctEstimateTransactions(database, getExchangeRateProvider()).catch(() => {});
         setError(null);
         setScreen("portfolio");
       } catch (e) {
