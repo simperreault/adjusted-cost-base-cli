@@ -1,5 +1,6 @@
 # Claude Code
 .claude/
+.dev/
 
 # Logs
 logs
