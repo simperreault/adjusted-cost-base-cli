@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A CLI tool for tracking Adjusted Cost Base (ACB) for Canadian stock trading. Supports both an interactive TUI mode (Ink/React) and inline commands (Commander.js).
 
+**This is a financial application.** Users rely on it to correctly calculate capital gains for tax reporting to the CRA. A silent wrong result is the worst possible outcome — it's worse than a crash. Every code change touching calculations, data storage, or transaction processing must preserve correctness. When in doubt, fail loudly rather than produce a plausible-looking wrong number. The codebase has runtime invariant assertions, dual-path verification, and property-based tests specifically to catch these issues — do not weaken or bypass them.
+
 ## Commands
 
 ```bash
