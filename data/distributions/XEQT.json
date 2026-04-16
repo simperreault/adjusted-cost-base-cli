@@ -1,0 +1,155 @@
+{
+  "ticker": "XEQT",
+  "name": "iShares Core Equity ETF Portfolio",
+  "cusip": "46436D108",
+  "provider": "BlackRock Asset Management Canada Ltd.",
+  "currency": "CAD",
+  "lastUpdated": "2026-04-16",
+  "notes": "Sourced from CDS T3/R16 filings (2020-2024 XLS archive, 2025 CTBS portal PDF).",
+  "distributions": [
+    {
+      "recordDate": "2020-03-26",
+      "rocPerUnit": 0.00235,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2020"
+    },
+    {
+      "recordDate": "2020-06-25",
+      "rocPerUnit": 0.00489,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2020"
+    },
+    {
+      "recordDate": "2020-09-25",
+      "rocPerUnit": 0.00299,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2020"
+    },
+    {
+      "recordDate": "2020-12-31",
+      "rocPerUnit": 0.00484,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2020"
+    },
+    {
+      "recordDate": "2021-03-26",
+      "rocPerUnit": 0.00703,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2021"
+    },
+    {
+      "recordDate": "2021-06-25",
+      "rocPerUnit": 0.01015,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2021"
+    },
+    {
+      "recordDate": "2021-09-27",
+      "rocPerUnit": 0.00478,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2021"
+    },
+    {
+      "recordDate": "2021-12-31",
+      "rocPerUnit": 0.01116,
+      "phantomDistPerUnit": 0.14008,
+      "source": "CDS T3R16 TY2021"
+    },
+    {
+      "recordDate": "2022-03-28",
+      "rocPerUnit": 0.00272,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2022"
+    },
+    {
+      "recordDate": "2022-06-27",
+      "rocPerUnit": 0.00616,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2022"
+    },
+    {
+      "recordDate": "2022-09-26",
+      "rocPerUnit": 0.0024,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2022"
+    },
+    {
+      "recordDate": "2022-12-30",
+      "rocPerUnit": 0.00545,
+      "phantomDistPerUnit": 0.29106,
+      "source": "CDS T3R16 TY2022"
+    },
+    {
+      "recordDate": "2023-03-23",
+      "rocPerUnit": 0.00343,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2023"
+    },
+    {
+      "recordDate": "2023-06-27",
+      "rocPerUnit": 0.00775,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2023"
+    },
+    {
+      "recordDate": "2023-09-26",
+      "rocPerUnit": 0.00351,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2023"
+    },
+    {
+      "recordDate": "2023-12-29",
+      "rocPerUnit": 0.00781,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2023"
+    },
+    {
+      "recordDate": "2024-03-25",
+      "rocPerUnit": 0.00403,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2024"
+    },
+    {
+      "recordDate": "2024-06-25",
+      "rocPerUnit": 0.00974,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2024"
+    },
+    {
+      "recordDate": "2024-09-24",
+      "rocPerUnit": 0.00412,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2024"
+    },
+    {
+      "recordDate": "2024-12-30",
+      "rocPerUnit": 0.01207,
+      "phantomDistPerUnit": 0,
+      "source": "CDS T3R16 TY2024"
+    },
+    {
+      "recordDate": "2025-03-26",
+      "rocPerUnit": 0.00609,
+      "phantomDistPerUnit": 0,
+      "source": "CDS CTBS T3R16 TY2025"
+    },
+    {
+      "recordDate": "2025-06-25",
+      "rocPerUnit": 0.01808,
+      "phantomDistPerUnit": 0,
+      "source": "CDS CTBS T3R16 TY2025"
+    },
+    {
+      "recordDate": "2025-09-24",
+      "rocPerUnit": 0.00677,
+      "phantomDistPerUnit": 0,
+      "source": "CDS CTBS T3R16 TY2025"
+    },
+    {
+      "recordDate": "2025-12-30",
+      "rocPerUnit": 0.01391,
+      "phantomDistPerUnit": 0.32215,
+      "source": "CDS CTBS T3R16 TY2025"
+    }
+  ]
+}
