@@ -390,7 +390,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   const getFieldLabel = (f: Field): string => {
     switch (f) {
       case "date": return "Date";
-      case "quantity": return mode === "DRIP" ? "Shares" : "Quantity";
+      case "quantity": return "Quantity";
       case "price": return `Price (${stock.currency})`;
       case "total": return `Total (${stock.currency})`;
       case "fees": return `Fees (${stock.currency})`;
@@ -401,7 +401,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   const getFieldPlaceholder = (f: Field): string => {
     switch (f) {
       case "date": return "today";
-      case "quantity": return mode === "DRIP" ? "12.95" : "100";
+      case "quantity": return "100";
       case "price": return mode === "DRIP" ? "or Enter for total" : "150.50";
       case "total": return quantity ? `${(parseFloat(quantity) * 150.50).toFixed(2)}` : "10000";
       case "fees": return "0";
