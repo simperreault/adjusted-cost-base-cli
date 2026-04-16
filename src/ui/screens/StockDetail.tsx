@@ -23,14 +23,21 @@ interface StockDetailProps {
   onBack: () => void;
 }
 
-type TransactionMode = "BUY" | "SELL" | "DRIP";
-type Field = "date" | "quantity" | "price" | "total" | "fees";
+type TransactionMode = "BUY" | "SELL" | "DRIP" | "SPLIT";
+type Field = "date" | "quantity" | "price" | "total" | "fees" | "ratio";
 
 const LABEL_WIDTH = 14;
-const MODES: TransactionMode[] = ["BUY", "SELL", "DRIP"];
+const MODES: TransactionMode[] = ["BUY", "SELL", "DRIP", "SPLIT"];
+
+const MODE_COLORS: Record<TransactionMode, string> = {
+  BUY: "green",
+  SELL: "red",
+  DRIP: "blue",
+  SPLIT: "yellow",
+};
 
 function getFields(mode: TransactionMode): Field[] {
-  // DRIP skips fees (always 0)
+  if (mode === "SPLIT") return ["date", "ratio"];
   if (mode === "DRIP") return ["date", "quantity", "price", "total"];
   return ["date", "quantity", "price", "total", "fees"];
 }
@@ -52,6 +59,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   const [price, setPrice] = useState("");
   const [total, setTotal] = useState("");
   const [fees, setFees] = useState("");
+  const [ratio, setRatio] = useState("");
   const [field, setField] = useState<Field>("date");
   const [error, setError] = useState<string | null>(null);
   const [formKey, setFormKey] = useState(0);
@@ -59,13 +67,9 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   // Exchange rate state (fetched after date is entered for USD stocks)
   const [exchangeRate, setExchangeRate] = useState<ExchangeRate | null>(null);
 
-  // Distribution sync state
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  // Status message (distributions sync, split confirmation, etc.)
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const hasDistributionData = isSupportedTicker(stock.ticker);
-
-  // Split input state
-  const [splitMode, setSplitMode] = useState(false);
-  const [splitRatio, setSplitRatio] = useState("");
 
   const txRepo = createTransactionRepository(db);
   const distRepo = createDistributionRepository(db);
@@ -91,18 +95,15 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
 
   useInput((input, key) => {
     if (key.escape) {
-      if (splitMode) {
-        setSplitMode(false);
-        setSplitRatio("");
-        return;
-      }
       onBack();
       return;
     }
 
     if (key.tab && !key.shift) {
       const idx = MODES.indexOf(mode);
-      setMode(MODES[(idx + 1) % MODES.length]!);
+      const nextMode = MODES[(idx + 1) % MODES.length]!;
+      setMode(nextMode);
+      setField("date");
       setError(null);
       return;
     }
@@ -119,24 +120,17 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       return;
     }
 
-    // S: enter split mode
-    if (input === "s" && !splitMode && field === "date") {
-      setSplitMode(true);
-      setSyncMessage(null);
-      return;
-    }
-
-    if (input === "d" && hasDistributionData && field === "date") {
+    if (input === "d" && hasDistributionData && field === "date" && mode !== "SPLIT") {
       try {
         const { applied, updated, skipped } = distRepo.applyBundledDistributions(stock.id, stock.ticker);
         const parts = [];
         if (applied > 0) parts.push(`${applied} applied`);
         if (updated > 0) parts.push(`${updated} updated`);
         if (skipped > 0) parts.push(`${skipped} unchanged`);
-        setSyncMessage(`Distributions synced: ${parts.join(", ")}`);
+        setStatusMessage(`Distributions synced: ${parts.join(", ")}`);
         refreshData();
       } catch (e) {
-        setSyncMessage(`Sync failed: ${e instanceof Error ? e.message : String(e)}`);
+        setStatusMessage(`Sync failed: ${e instanceof Error ? e.message : String(e)}`);
       }
       return;
     }
@@ -150,67 +144,13 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     }
   });
 
-  const handleSplitSubmit = (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      setSplitMode(false);
-      return;
-    }
-
-    // Parse ratio: accept "2:1", "1:10", or just "2"
-    let ratio: number;
-    const colonMatch = trimmed.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
-    if (colonMatch) {
-      const numerator = parseFloat(colonMatch[1]!);
-      const denominator = parseFloat(colonMatch[2]!);
-      if (denominator === 0) {
-        setError("Invalid split ratio");
-        return;
-      }
-      ratio = numerator / denominator;
-    } else {
-      ratio = parseFloat(trimmed);
-    }
-
-    if (isNaN(ratio) || ratio <= 0) {
-      setError("Split ratio must be a positive number (e.g. 2:1 or 0.1)");
-      return;
-    }
-
-    const currentState = resolveAcbState(db, stock.id);
-    if (currentState.totalShares <= 0) {
-      setError("No shares to split");
-      return;
-    }
-
-    try {
-      splitRepo.create({
-        stockId: stock.id,
-        date: new Date(),
-        ratio,
-        notes: `${trimmed} split`,
-      });
-
-      const newState = resolveAcbState(db, stock.id);
-      setSyncMessage(
-        `Split recorded: ${currentState.totalShares} → ${newState.totalShares.toFixed(2)} shares, ` +
-        `ACB ${formatCurrency(currentState.acbPerShare, "CAD")} → ${formatCurrency(newState.acbPerShare, "CAD")}/share`
-      );
-      setSplitMode(false);
-      setSplitRatio("");
-      setError(null);
-      refreshData();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to record split");
-    }
-  };
-
   const resetForm = () => {
     setDate("");
     setQuantity("");
     setPrice("");
     setTotal("");
     setFees("");
+    setRatio("");
     setField("date");
     setError(null);
     setExchangeRate(null);
@@ -227,7 +167,8 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     setDate(formatDate(parsed));
     setError(null);
 
-    if (stock.currency === "USD") {
+    // Fetch exchange rate for USD stocks (not needed for splits)
+    if (stock.currency === "USD" && mode !== "SPLIT") {
       try {
         const rate = await getExchangeRateProvider().getRate("USD", "CAD", parsed);
         setExchangeRate(rate);
@@ -237,7 +178,9 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       }
     }
 
-    setField("quantity");
+    // Advance to next field based on mode
+    const nextField = fields[fields.indexOf("date") + 1];
+    if (nextField) setField(nextField);
   };
 
   const handleQuantitySubmit = (value: string) => {
@@ -262,7 +205,6 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
 
   const handlePriceSubmit = (value: string) => {
     if (value.trim() === "") {
-      // User skipped price — move to total field for manual entry
       setPrice("");
       setTotal("");
       setError(null);
@@ -282,7 +224,6 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     setPrice(value);
     setTotal(calculatedTotal);
     setError(null);
-    // Skip total field since it's auto-filled, go to fees (or done for DRIP)
     if (mode === "DRIP") {
       submitTransaction(result.value, 0);
     } else {
@@ -292,10 +233,8 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
 
   const handleTotalSubmit = (value: string) => {
     if (value.trim() === "" && price) {
-      // User accepted the pre-filled total, move on
       if (mode === "DRIP") {
-        const priceVal = parseFloat(price);
-        submitTransaction(priceVal, 0);
+        submitTransaction(parseFloat(price), 0);
       } else {
         setField("fees");
       }
@@ -345,6 +284,62 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     await submitTransaction(priceVal, feeResult.value);
   };
 
+  const parseSplitRatio = (value: string): number | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    const colonMatch = trimmed.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+    if (colonMatch) {
+      const numerator = parseFloat(colonMatch[1]!);
+      const denominator = parseFloat(colonMatch[2]!);
+      if (denominator === 0) return null;
+      return numerator / denominator;
+    }
+
+    const num = parseFloat(trimmed);
+    if (isNaN(num) || num <= 0) return null;
+    return num;
+  };
+
+  const handleRatioSubmit = (value: string) => {
+    const splitRatio = parseSplitRatio(value);
+    if (splitRatio === null) {
+      setError("Enter a ratio like 2:1, 1:10, or 3:2");
+      return;
+    }
+
+    const currentState = resolveAcbState(db, stock.id);
+    if (currentState.totalShares <= 0) {
+      setError("No shares to split");
+      return;
+    }
+
+    const dateResult = parseDate(date);
+    if (!dateResult) {
+      setError("Invalid date");
+      return;
+    }
+
+    try {
+      splitRepo.create({
+        stockId: stock.id,
+        date: dateResult,
+        ratio: splitRatio,
+        notes: `${value.trim()} split`,
+      });
+
+      const newState = resolveAcbState(db, stock.id);
+      setStatusMessage(
+        `Split recorded: ${currentState.totalShares} → ${newState.totalShares} shares, ` +
+        `ACB ${formatCurrency(currentState.acbPerShare, "CAD")} → ${formatCurrency(newState.acbPerShare, "CAD")}/share`
+      );
+      resetForm();
+      refreshData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to record split");
+    }
+  };
+
   const submitTransaction = async (pricePerShare: number, feesValue: number) => {
     const dateResult = parseDate(date);
     const qtyResult = validateQuantity(quantity);
@@ -363,7 +358,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
 
       txRepo.create({
         stockId: stock.id,
-        type: mode,
+        type: mode as "BUY" | "SELL" | "DRIP",
         date: dateResult,
         quantity: qtyResult.value,
         pricePerShare: pricePerShare,
@@ -388,6 +383,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       case "price": return price;
       case "total": return total;
       case "fees": return fees;
+      case "ratio": return ratio;
     }
   };
 
@@ -398,6 +394,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       case "price": return `Price (${stock.currency})`;
       case "total": return `Total (${stock.currency})`;
       case "fees": return `Fees (${stock.currency})`;
+      case "ratio": return "Ratio";
     }
   };
 
@@ -408,6 +405,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       case "price": return mode === "DRIP" ? "or Enter for total" : "150.50";
       case "total": return quantity ? `${(parseFloat(quantity) * 150.50).toFixed(2)}` : "10000";
       case "fees": return "0";
+      case "ratio": return "2:1";
     }
   };
 
@@ -418,6 +416,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       case "price": return handlePriceSubmit;
       case "total": return handleTotalSubmit;
       case "fees": return handleFeesSubmit;
+      case "ratio": return handleRatioSubmit;
     }
   };
 
@@ -471,7 +470,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
             </Text>
           )}
         </Box>
-        {f === "date" && exchangeRate && !isPending && (
+        {f === "date" && exchangeRate && !isPending && mode !== "SPLIT" && (
           <Box>
             <Text color="gray">{"".padEnd(LABEL_WIDTH)}</Text>
             <Text color={exchangeRate.isEstimate ? "yellow" : "gray"}>
@@ -525,60 +524,34 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     </Box>
   );
 
-  const renderFormPanel = () => {
-    if (splitMode) {
-      return (
-        <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} width={44}>
-          <Text bold color="yellow">Stock Split</Text>
-          <Box marginTop={1}>
-            <Text color="cyan">{"Ratio".padEnd(LABEL_WIDTH)}</Text>
-            <TextInput
-              key={`split-${formKey}`}
-              placeholder="2:1"
-              onSubmit={handleSplitSubmit}
-            />
-          </Box>
-          <Box marginTop={1}>
-            <Text color="gray">Enter ratio (e.g. 2:1, 1:10, 3:2) or Esc to cancel</Text>
-          </Box>
-          {error && (
-            <Box marginTop={1}>
-              <Text color="red">{error}</Text>
-            </Box>
-          )}
-        </Box>
-      );
-    }
-
-    return (
-      <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} width={44}>
-        <Box>
-          {MODES.map((m) => (
-            <React.Fragment key={m}>
-              <Text
-                color={mode === m ? (m === "BUY" ? "green" : m === "SELL" ? "red" : "blue") : "gray"}
-                bold={mode === m}
-                inverse={mode === m}
-              >
-                {` ${m} `}
-              </Text>
-              {m !== MODES[MODES.length - 1] && <Text> </Text>}
-            </React.Fragment>
-          ))}
-        </Box>
-
-        <Box marginTop={1} flexDirection="column">
-          {fields.map(renderFormField)}
-        </Box>
-
-        {error && (
-          <Box marginTop={1}>
-            <Text color="red">{error}</Text>
-          </Box>
-        )}
+  const renderFormPanel = () => (
+    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} width={44}>
+      <Box>
+        {MODES.map((m) => (
+          <React.Fragment key={m}>
+            <Text
+              color={mode === m ? MODE_COLORS[m] : "gray"}
+              bold={mode === m}
+              inverse={mode === m}
+            >
+              {` ${m} `}
+            </Text>
+            {m !== MODES[MODES.length - 1] && <Text> </Text>}
+          </React.Fragment>
+        ))}
       </Box>
-    );
-  };
+
+      <Box marginTop={1} flexDirection="column">
+        {fields.map(renderFormField)}
+      </Box>
+
+      {error && (
+        <Box marginTop={1}>
+          <Text color="red">{error}</Text>
+        </Box>
+      )}
+    </Box>
+  );
 
   return (
     <Box flexDirection="column" key={formKey}>
@@ -631,17 +604,17 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
         </Box>
       )}
 
-      {/* Sync message */}
-      {syncMessage && (
+      {/* Status message */}
+      {statusMessage && (
         <Box marginTop={1}>
-          <Text color="yellow">{syncMessage}</Text>
+          <Text color="yellow">{statusMessage}</Text>
         </Box>
       )}
 
       {/* Footer */}
       <Box marginTop={1}>
         <Text color="gray">
-          [Tab] Mode · [S] Split{hasDistributionData ? " · [D] Distributions" : ""} · [Esc] Exit
+          [Tab] Mode{hasDistributionData ? " · [D] Distributions" : ""} · [Esc] Exit
         </Text>
       </Box>
     </Box>
