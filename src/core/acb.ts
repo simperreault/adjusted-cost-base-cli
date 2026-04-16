@@ -99,6 +99,108 @@ export function calculateAcbAfterSell(
   return { newState, capitalGainCad: capitalGain };
 }
 
+export interface DistributionInput {
+  rocPerUnit: number;
+  phantomDistPerUnit: number;
+}
+
+export interface DistributionResult {
+  newState: ACBState;
+  rocAppliedCad: number;
+  phantomAppliedCad: number;
+  deemedCapitalGainCad: number | null;
+}
+
+export function calculateAcbAfterDistribution(
+  currentState: ACBState,
+  distribution: DistributionInput
+): DistributionResult {
+  validateNonNegative(distribution.rocPerUnit, "ROC per unit");
+  validateNonNegative(distribution.phantomDistPerUnit, "Phantom distribution per unit");
+
+  if (currentState.totalShares <= 0) {
+    return {
+      newState: currentState,
+      rocAppliedCad: 0,
+      phantomAppliedCad: 0,
+      deemedCapitalGainCad: null,
+    };
+  }
+
+  const rocAmount = distribution.rocPerUnit * currentState.totalShares;
+  const phantomAmount = distribution.phantomDistPerUnit * currentState.totalShares;
+
+  let newTotalCost = currentState.totalCostCad;
+  let deemedGain: number | null = null;
+
+  // ROC decreases ACB
+  newTotalCost -= rocAmount;
+
+  // If ROC exceeds ACB, excess is deemed a capital gain and ACB resets to 0
+  if (newTotalCost < 0) {
+    deemedGain = Math.abs(newTotalCost);
+    newTotalCost = 0;
+  }
+
+  // Phantom distribution increases ACB
+  newTotalCost += phantomAmount;
+
+  const newState: ACBState = {
+    totalShares: currentState.totalShares,
+    totalCostCad: newTotalCost,
+    acbPerShare: newTotalCost / currentState.totalShares,
+  };
+  assertACBState(newState, { operation: "distribution", distribution });
+  return {
+    newState,
+    rocAppliedCad: rocAmount,
+    phantomAppliedCad: phantomAmount,
+    deemedCapitalGainCad: deemedGain,
+  };
+}
+
+export type AcbEvent =
+  | { kind: "BUY"; date: Date; quantity: number; pricePerShareCad: number; feesCad: number }
+  | { kind: "SELL"; date: Date; quantity: number; pricePerShareCad: number; feesCad: number }
+  | { kind: "DISTRIBUTION"; date: Date; rocPerUnit: number; phantomDistPerUnit: number };
+
+export function recalculateAcbFromEvents(events: AcbEvent[]): ACBState {
+  const order = { BUY: 0, DISTRIBUTION: 1, SELL: 2 };
+  const sorted = [...events].sort((a, b) => {
+    const dateDiff = a.date.getTime() - b.date.getTime();
+    if (dateDiff !== 0) return dateDiff;
+    return order[a.kind] - order[b.kind];
+  });
+
+  let state = getInitialAcbState();
+
+  for (const event of sorted) {
+    if (event.kind === "BUY") {
+      state = calculateAcbAfterBuy(state, {
+        quantity: event.quantity,
+        pricePerShareCad: event.pricePerShareCad,
+        feesCad: event.feesCad,
+      });
+    } else if (event.kind === "SELL") {
+      const result = calculateAcbAfterSell(state, {
+        quantity: event.quantity,
+        proceedsPerShareCad: event.pricePerShareCad,
+        feesCad: event.feesCad,
+      });
+      state = result.newState;
+    } else {
+      const result = calculateAcbAfterDistribution(state, {
+        rocPerUnit: event.rocPerUnit,
+        phantomDistPerUnit: event.phantomDistPerUnit,
+      });
+      state = result.newState;
+    }
+  }
+
+  assertACBState(state, { operation: "recalculateFromEvents", eventCount: events.length });
+  return state;
+}
+
 export function recalculateAcbFromTransactions(
   transactions: Array<{
     type: "BUY" | "SELL";
@@ -107,25 +209,15 @@ export function recalculateAcbFromTransactions(
     feesCad: number;
   }>
 ): ACBState {
-  let state = getInitialAcbState();
+  const events: AcbEvent[] = transactions.map((tx, i) => ({
+    kind: tx.type,
+    date: new Date(i),
+    quantity: tx.quantity,
+    pricePerShareCad: tx.pricePerShareCad,
+    feesCad: tx.feesCad,
+  }));
 
-  for (const tx of transactions) {
-    if (tx.type === "BUY") {
-      state = calculateAcbAfterBuy(state, {
-        quantity: tx.quantity,
-        pricePerShareCad: tx.pricePerShareCad,
-        feesCad: tx.feesCad,
-      });
-    } else {
-      const result = calculateAcbAfterSell(state, {
-        quantity: tx.quantity,
-        proceedsPerShareCad: tx.pricePerShareCad,
-        feesCad: tx.feesCad,
-      });
-      state = result.newState;
-    }
-  }
-
+  const state = recalculateAcbFromEvents(events);
   assertACBState(state, { operation: "recalculate", transactionCount: transactions.length });
   return state;
 }

@@ -72,10 +72,38 @@ function initializeSchema(sqlite: Database): void {
       calculated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS distributions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      stock_id INTEGER NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+      record_date INTEGER NOT NULL,
+      roc_per_unit REAL NOT NULL DEFAULT 0,
+      phantom_dist_per_unit REAL NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'manual',
+      notes TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS distribution_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      stock_id INTEGER NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+      distribution_id INTEGER NOT NULL REFERENCES distributions(id) ON DELETE CASCADE,
+      total_shares REAL NOT NULL,
+      total_cost_cad REAL NOT NULL,
+      acb_per_share REAL NOT NULL,
+      roc_applied_cad REAL NOT NULL,
+      phantom_applied_cad REAL NOT NULL,
+      deemed_capital_gain_cad REAL,
+      calculated_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_transactions_stock_id ON transactions(stock_id);
     CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
     CREATE INDEX IF NOT EXISTS idx_stock_snapshots_stock_id ON stock_snapshots(stock_id);
     CREATE INDEX IF NOT EXISTS idx_stock_snapshots_transaction_id ON stock_snapshots(transaction_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_distributions_stock_record_date ON distributions(stock_id, record_date);
+    CREATE INDEX IF NOT EXISTS idx_distributions_record_date ON distributions(record_date);
+    CREATE INDEX IF NOT EXISTS idx_distribution_snapshots_stock_id ON distribution_snapshots(stock_id);
+    CREATE INDEX IF NOT EXISTS idx_distribution_snapshots_distribution_id ON distribution_snapshots(distribution_id);
   `);
 
   // Migration: add exchange_rate_is_estimate column

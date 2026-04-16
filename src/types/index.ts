@@ -66,3 +66,29 @@ export interface NewTransaction {
   fees: number;
   feesCad: number;
 }
+
+export type DistributionSource = "manual" | "bundled" | "synced";
+
+export interface Distribution {
+  id: number;
+  stockId: number;
+  recordDate: Date;
+  rocPerUnit: number;
+  phantomDistPerUnit: number;
+  source: DistributionSource;
+  notes: string | null;
+  createdAt: Date;
+}
+
+export interface DistributionSnapshot {
+  id: number;
+  stockId: number;
+  distributionId: number;
+  totalShares: number;
+  totalCostCad: number;
+  acbPerShare: number;
+  rocAppliedCad: number;
+  phantomAppliedCad: number;
+  deemedCapitalGainCad: number | null;
+  calculatedAt: Date;
+}

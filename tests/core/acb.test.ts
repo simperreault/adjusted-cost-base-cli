@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   calculateAcbAfterBuy,
   calculateAcbAfterSell,
+  calculateAcbAfterDistribution,
   getInitialAcbState,
   recalculateAcbFromTransactions,
+  recalculateAcbFromEvents,
 } from "../../src/core/acb.ts";
 
 describe("getInitialAcbState", () => {
@@ -177,5 +179,117 @@ describe("recalculateAcbFromTransactions", () => {
   test("handles empty transaction list", () => {
     const result = recalculateAcbFromTransactions([]);
     expect(result).toEqual(getInitialAcbState());
+  });
+});
+
+describe("calculateAcbAfterDistribution", () => {
+  test("ROC reduces ACB", () => {
+    const state = { totalShares: 100, totalCostCad: 1000, acbPerShare: 10 };
+    const result = calculateAcbAfterDistribution(state, { rocPerUnit: 0.50, phantomDistPerUnit: 0 });
+    expect(result.newState.totalCostCad).toBe(950);
+    expect(result.newState.acbPerShare).toBe(9.50);
+    expect(result.rocAppliedCad).toBe(50);
+    expect(result.deemedCapitalGainCad).toBeNull();
+  });
+
+  test("phantom distribution increases ACB", () => {
+    const state = { totalShares: 100, totalCostCad: 1000, acbPerShare: 10 };
+    const result = calculateAcbAfterDistribution(state, { rocPerUnit: 0, phantomDistPerUnit: 0.25 });
+    expect(result.newState.totalCostCad).toBe(1025);
+    expect(result.newState.acbPerShare).toBe(10.25);
+    expect(result.phantomAppliedCad).toBe(25);
+  });
+
+  test("combined ROC and phantom distribution", () => {
+    const state = { totalShares: 1000, totalCostCad: 30000, acbPerShare: 30 };
+    const result = calculateAcbAfterDistribution(state, { rocPerUnit: 0.50877, phantomDistPerUnit: 1.68564 });
+    expect(result.newState.totalCostCad).toBeCloseTo(31176.87, 2);
+    expect(result.rocAppliedCad).toBeCloseTo(508.77, 2);
+    expect(result.phantomAppliedCad).toBeCloseTo(1685.64, 2);
+    expect(result.deemedCapitalGainCad).toBeNull();
+  });
+
+  test("ROC exceeding ACB triggers deemed capital gain", () => {
+    const state = { totalShares: 100, totalCostCad: 20, acbPerShare: 0.20 };
+    const result = calculateAcbAfterDistribution(state, { rocPerUnit: 0.50, phantomDistPerUnit: 0 });
+    expect(result.deemedCapitalGainCad).toBe(30);
+    expect(result.newState.totalCostCad).toBe(0);
+    expect(result.newState.acbPerShare).toBe(0);
+  });
+
+  test("ROC exceeding ACB with phantom distribution", () => {
+    const state = { totalShares: 100, totalCostCad: 20, acbPerShare: 0.20 };
+    const result = calculateAcbAfterDistribution(state, { rocPerUnit: 0.50, phantomDistPerUnit: 0.10 });
+    expect(result.deemedCapitalGainCad).toBe(30);
+    expect(result.newState.totalCostCad).toBe(10);
+    expect(result.newState.acbPerShare).toBe(0.10);
+  });
+
+  test("distribution with zero shares is a no-op", () => {
+    const state = getInitialAcbState();
+    const result = calculateAcbAfterDistribution(state, { rocPerUnit: 0.50, phantomDistPerUnit: 0.25 });
+    expect(result.newState).toEqual(state);
+    expect(result.rocAppliedCad).toBe(0);
+    expect(result.phantomAppliedCad).toBe(0);
+    expect(result.deemedCapitalGainCad).toBeNull();
+  });
+
+  test("distribution with fractional shares", () => {
+    const state = { totalShares: 10.5, totalCostCad: 315, acbPerShare: 30 };
+    const result = calculateAcbAfterDistribution(state, { rocPerUnit: 0, phantomDistPerUnit: 0.10 });
+    expect(result.newState.totalCostCad).toBeCloseTo(316.05, 2);
+    expect(result.phantomAppliedCad).toBeCloseTo(1.05, 2);
+  });
+});
+
+describe("recalculateAcbFromEvents", () => {
+  test("interleaved buy, distribution, sell produces correct result", () => {
+    const events = [
+      { kind: "BUY" as const, date: new Date("2023-01-15"), quantity: 100, pricePerShareCad: 30, feesCad: 0 },
+      { kind: "DISTRIBUTION" as const, date: new Date("2023-12-29"), rocPerUnit: 0, phantomDistPerUnit: 0.25 },
+      { kind: "SELL" as const, date: new Date("2024-06-15"), quantity: 100, pricePerShareCad: 35, feesCad: 0 },
+    ];
+    const state = recalculateAcbFromEvents(events);
+    expect(state.totalShares).toBe(0);
+    expect(state.totalCostCad).toBe(0);
+  });
+
+  test("distribution sorts before sell on same date", () => {
+    const events = [
+      { kind: "BUY" as const, date: new Date("2023-01-15"), quantity: 100, pricePerShareCad: 10, feesCad: 0 },
+      { kind: "DISTRIBUTION" as const, date: new Date("2023-12-29"), rocPerUnit: 1.0, phantomDistPerUnit: 0 },
+      { kind: "SELL" as const, date: new Date("2023-12-29"), quantity: 100, pricePerShareCad: 12, feesCad: 0 },
+    ];
+    const state = recalculateAcbFromEvents(events);
+    expect(state.totalShares).toBe(0);
+    expect(state.totalCostCad).toBe(0);
+  });
+
+  test("buy sorts before distribution on same date", () => {
+    const events = [
+      { kind: "BUY" as const, date: new Date("2023-12-29"), quantity: 100, pricePerShareCad: 30, feesCad: 0 },
+      { kind: "DISTRIBUTION" as const, date: new Date("2023-12-29"), rocPerUnit: 0, phantomDistPerUnit: 0.50 },
+    ];
+    const state = recalculateAcbFromEvents(events);
+    expect(state.totalShares).toBe(100);
+    expect(state.totalCostCad).toBe(3050);
+    expect(state.acbPerShare).toBe(30.50);
+  });
+
+  test("multiple distributions over time", () => {
+    const events = [
+      { kind: "BUY" as const, date: new Date("2020-01-01"), quantity: 1000, pricePerShareCad: 25, feesCad: 10 },
+      { kind: "DISTRIBUTION" as const, date: new Date("2020-12-31"), rocPerUnit: 0, phantomDistPerUnit: 0.11385 },
+      { kind: "DISTRIBUTION" as const, date: new Date("2021-12-31"), rocPerUnit: 0, phantomDistPerUnit: 0.22216 },
+      { kind: "DISTRIBUTION" as const, date: new Date("2022-12-30"), rocPerUnit: 0, phantomDistPerUnit: 0.19540 },
+    ];
+    const state = recalculateAcbFromEvents(events);
+    expect(state.totalShares).toBe(1000);
+    expect(state.totalCostCad).toBeCloseTo(25541.41, 2);
+  });
+
+  test("handles empty events list", () => {
+    const state = recalculateAcbFromEvents([]);
+    expect(state).toEqual(getInitialAcbState());
   });
 });

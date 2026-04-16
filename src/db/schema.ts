@@ -48,9 +48,49 @@ export const stockSnapshots = sqliteTable("stock_snapshots", {
     .$defaultFn(() => new Date()),
 });
 
+export const distributions = sqliteTable("distributions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  stockId: integer("stock_id")
+    .notNull()
+    .references(() => stocks.id, { onDelete: "cascade" }),
+  recordDate: integer("record_date", { mode: "timestamp" }).notNull(),
+  rocPerUnit: real("roc_per_unit").notNull().default(0),
+  phantomDistPerUnit: real("phantom_dist_per_unit").notNull().default(0),
+  source: text("source", { enum: ["manual", "bundled", "synced"] })
+    .notNull()
+    .default("manual"),
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const distributionSnapshots = sqliteTable("distribution_snapshots", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  stockId: integer("stock_id")
+    .notNull()
+    .references(() => stocks.id, { onDelete: "cascade" }),
+  distributionId: integer("distribution_id")
+    .notNull()
+    .references(() => distributions.id, { onDelete: "cascade" }),
+  totalShares: real("total_shares").notNull(),
+  totalCostCad: real("total_cost_cad").notNull(),
+  acbPerShare: real("acb_per_share").notNull(),
+  rocAppliedCad: real("roc_applied_cad").notNull(),
+  phantomAppliedCad: real("phantom_applied_cad").notNull(),
+  deemedCapitalGainCad: real("deemed_capital_gain_cad"),
+  calculatedAt: integer("calculated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export type StockRow = typeof stocks.$inferSelect;
 export type NewStockRow = typeof stocks.$inferInsert;
 export type TransactionRow = typeof transactions.$inferSelect;
 export type NewTransactionRow = typeof transactions.$inferInsert;
 export type StockSnapshotRow = typeof stockSnapshots.$inferSelect;
 export type NewStockSnapshotRow = typeof stockSnapshots.$inferInsert;
+export type DistributionRow = typeof distributions.$inferSelect;
+export type NewDistributionRow = typeof distributions.$inferInsert;
+export type DistributionSnapshotRow = typeof distributionSnapshots.$inferSelect;
+export type NewDistributionSnapshotRow = typeof distributionSnapshots.$inferInsert;
