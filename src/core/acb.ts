@@ -161,11 +161,12 @@ export function calculateAcbAfterDistribution(
 
 export type AcbEvent =
   | { kind: "BUY"; date: Date; quantity: number; pricePerShareCad: number; feesCad: number }
+  | { kind: "DRIP"; date: Date; quantity: number; pricePerShareCad: number; feesCad: number }
   | { kind: "SELL"; date: Date; quantity: number; pricePerShareCad: number; feesCad: number }
   | { kind: "DISTRIBUTION"; date: Date; rocPerUnit: number; phantomDistPerUnit: number };
 
 export function recalculateAcbFromEvents(events: AcbEvent[]): ACBState {
-  const order = { BUY: 0, DISTRIBUTION: 1, SELL: 2 };
+  const order = { BUY: 0, DRIP: 0, DISTRIBUTION: 1, SELL: 2 };
   const sorted = [...events].sort((a, b) => {
     const dateDiff = a.date.getTime() - b.date.getTime();
     if (dateDiff !== 0) return dateDiff;
@@ -175,7 +176,7 @@ export function recalculateAcbFromEvents(events: AcbEvent[]): ACBState {
   let state = getInitialAcbState();
 
   for (const event of sorted) {
-    if (event.kind === "BUY") {
+    if (event.kind === "BUY" || event.kind === "DRIP") {
       state = calculateAcbAfterBuy(state, {
         quantity: event.quantity,
         pricePerShareCad: event.pricePerShareCad,

@@ -167,6 +167,72 @@ describe("distribution integration", () => {
   });
 });
 
+describe("DRIP transactions", () => {
+  let db: AppDatabase;
+  let stockId: number;
+
+  beforeEach(() => {
+    db = createInMemoryDatabase();
+    const stock = db
+      .insert(stocks)
+      .values({ name: "Test ETF", ticker: "TEST", currency: "CAD", createdAt: new Date() })
+      .returning()
+      .get();
+    stockId = stock.id;
+  });
+
+  test("DRIP adds shares and increases ACB like a buy", () => {
+    const txRepo = createTransactionRepository(db);
+
+    txRepo.create({
+      stockId, type: "BUY", date: new Date("2023-01-01"),
+      quantity: 100, pricePerShare: 30, pricePerShareCad: 30,
+      exchangeRate: 1, fees: 0, feesCad: 0,
+    });
+
+    // DRIP: 12.95 shares at $24.80/share ($321.16 total reinvested)
+    txRepo.create({
+      stockId, type: "DRIP", date: new Date("2023-06-15"),
+      quantity: 12.95, pricePerShare: 24.80, pricePerShareCad: 24.80,
+      exchangeRate: 1, fees: 0, feesCad: 0,
+    });
+
+    const state = resolveAcbState(db, stockId);
+    expect(state.totalShares).toBeCloseTo(112.95, 2);
+    expect(state.totalCostCad).toBeCloseTo(3321.16, 2);
+  });
+
+  test("DRIP + ROC distribution produces correct capital gain on sell", () => {
+    const txRepo = createTransactionRepository(db);
+    const distRepo = createDistributionRepository(db);
+
+    // Buy 1000 shares at $25
+    txRepo.create({
+      stockId, type: "BUY", date: new Date("2023-01-01"),
+      quantity: 1000, pricePerShare: 25, pricePerShareCad: 25,
+      exchangeRate: 1, fees: 0, feesCad: 0,
+    });
+
+    // DRIP: reinvest $321.16 into 12.95 shares
+    txRepo.create({
+      stockId, type: "DRIP", date: new Date("2023-06-15"),
+      quantity: 12.95, pricePerShare: 24.80, pricePerShareCad: 24.80,
+      exchangeRate: 1, fees: 0, feesCad: 0,
+    });
+
+    // ROC distribution: $0.50/unit on 1012.95 shares
+    distRepo.create({
+      stockId, recordDate: new Date("2023-12-29"),
+      rocPerUnit: 0.50, phantomDistPerUnit: 0, source: "manual",
+    });
+
+    const state = resolveAcbState(db, stockId);
+    // Cost: 25000 + 321.16 - (0.50 * 1012.95) = 25321.16 - 506.475 = 24814.685
+    expect(state.totalShares).toBeCloseTo(1012.95, 2);
+    expect(state.totalCostCad).toBeCloseTo(24814.685, 1);
+  });
+});
+
 describe("applyBundledDistributions", () => {
   let db: AppDatabase;
   let stockId: number;

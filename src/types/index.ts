@@ -1,5 +1,5 @@
 export type Currency = "CAD" | "USD";
-export type TransactionType = "BUY" | "SELL";
+export type TransactionType = "BUY" | "SELL" | "DRIP";
 
 export interface ACBState {
   totalShares: number;

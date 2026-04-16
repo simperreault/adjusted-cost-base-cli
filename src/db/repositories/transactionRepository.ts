@@ -14,7 +14,7 @@ import { resolveAcbState } from "./acbStateResolver.ts";
 
 export interface CreateTransactionInput {
   stockId: number;
-  type: "BUY" | "SELL";
+  type: "BUY" | "SELL" | "DRIP";
   date: Date;
   quantity: number;
   pricePerShare: number;
@@ -39,7 +39,7 @@ export function createTransactionRepository(db: AppDatabase) {
       let newState;
       let realizedGain: number | null = null;
 
-      if (data.type === "BUY") {
+      if (data.type === "BUY" || data.type === "DRIP") {
         newState = calculateAcbAfterBuy(currentState, {
           quantity: data.quantity,
           pricePerShareCad: data.pricePerShareCad,

@@ -21,11 +21,17 @@ interface StockDetailProps {
   onBack: () => void;
 }
 
-type TransactionMode = "BUY" | "SELL";
-type Field = "date" | "quantity" | "price" | "fees";
+type TransactionMode = "BUY" | "SELL" | "DRIP";
+type Field = "date" | "quantity" | "price" | "total" | "fees";
 
-const FIELDS: Field[] = ["date", "quantity", "price", "fees"];
-const LABEL_WIDTH = 12;
+const LABEL_WIDTH = 14;
+const MODES: TransactionMode[] = ["BUY", "SELL", "DRIP"];
+
+function getFields(mode: TransactionMode): Field[] {
+  // DRIP skips fees (always 0)
+  if (mode === "DRIP") return ["date", "quantity", "price", "total"];
+  return ["date", "quantity", "price", "total", "fees"];
+}
 
 export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   const { stdout } = useStdout();
@@ -42,6 +48,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   const [date, setDate] = useState("");
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
+  const [total, setTotal] = useState("");
   const [fees, setFees] = useState("");
   const [field, setField] = useState<Field>("date");
   const [error, setError] = useState<string | null>(null);
@@ -57,17 +64,16 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   const txRepo = createTransactionRepository(db);
   const distRepo = createDistributionRepository(db);
 
+  const fields = getFields(mode);
+
   const refreshData = () => {
     const recent = txRepo.findRecent(stock.id, 50);
-    // Reverse to show oldest first, newest at bottom
     setTransactions([...recent].reverse());
     setSnapshot(txRepo.getLatestSnapshot(stock.id) ?? null);
-    // Auto-scroll to bottom
     setScrollOffset(Math.max(0, recent.length - getVisibleRowCount()));
   };
 
   const getVisibleRowCount = () => {
-    // Reserve space for header, form, footer
     const reservedRows = isWideTerminal ? 8 : 18;
     return Math.max(3, terminalHeight - reservedRows);
   };
@@ -82,18 +88,17 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       return;
     }
 
-    // Tab without shift: toggle Buy/Sell mode
     if (key.tab && !key.shift) {
-      setMode((m) => (m === "BUY" ? "SELL" : "BUY"));
+      const idx = MODES.indexOf(mode);
+      setMode(MODES[(idx + 1) % MODES.length]!);
       setError(null);
       return;
     }
 
-    // Shift+Tab: go back to previous field
     if (key.tab && key.shift) {
-      const currentIndex = FIELDS.indexOf(field);
+      const currentIndex = fields.indexOf(field);
       if (currentIndex > 0) {
-        const prevField = FIELDS[currentIndex - 1];
+        const prevField = fields[currentIndex - 1];
         if (prevField) {
           setField(prevField);
           setError(null);
@@ -102,7 +107,6 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       return;
     }
 
-    // D: sync distribution data
     if (input === "d" && hasDistributionData && field === "date") {
       try {
         const { applied, updated, skipped } = distRepo.applyBundledDistributions(stock.id, stock.ticker);
@@ -118,7 +122,6 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       return;
     }
 
-    // Arrow keys for scrolling transactions
     if (key.upArrow) {
       setScrollOffset((o) => Math.max(0, o - 1));
     }
@@ -132,6 +135,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     setDate("");
     setQuantity("");
     setPrice("");
+    setTotal("");
     setFees("");
     setField("date");
     setError(null);
@@ -149,7 +153,6 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     setDate(formatDate(parsed));
     setError(null);
 
-    // Fetch exchange rate for USD stocks
     if (stock.currency === "USD") {
       try {
         const rate = await getExchangeRateProvider().getRate("USD", "CAD", parsed);
@@ -184,14 +187,71 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   };
 
   const handlePriceSubmit = (value: string) => {
+    if (value.trim() === "") {
+      // User skipped price — move to total field for manual entry
+      setPrice("");
+      setTotal("");
+      setError(null);
+      setField("total");
+      return;
+    }
+
     const result = validatePrice(value);
     if (!result.success) {
       setError(result.error);
       return;
     }
+
+    const qty = parseFloat(quantity);
+    const calculatedTotal = (result.value * qty).toFixed(2);
+
     setPrice(value);
+    setTotal(calculatedTotal);
     setError(null);
-    setField("fees");
+    // Skip total field since it's auto-filled, go to fees (or done for DRIP)
+    if (mode === "DRIP") {
+      submitTransaction(result.value, 0);
+    } else {
+      setField("total");
+    }
+  };
+
+  const handleTotalSubmit = (value: string) => {
+    if (value.trim() === "" && price) {
+      // User accepted the pre-filled total, move on
+      if (mode === "DRIP") {
+        const priceVal = parseFloat(price);
+        submitTransaction(priceVal, 0);
+      } else {
+        setField("fees");
+      }
+      return;
+    }
+
+    const totalValue = value.trim() === "" ? total : value;
+    if (!totalValue) {
+      setError("Enter either a price per share or a total amount");
+      return;
+    }
+
+    const totalResult = validatePrice(totalValue);
+    if (!totalResult.success) {
+      setError(totalResult.error);
+      return;
+    }
+
+    const qty = parseFloat(quantity);
+    const calculatedPrice = totalResult.value / qty;
+
+    setTotal(totalValue);
+    setPrice(calculatedPrice.toFixed(5));
+    setError(null);
+
+    if (mode === "DRIP") {
+      submitTransaction(calculatedPrice, 0);
+    } else {
+      setField("fees");
+    }
   };
 
   const handleFeesSubmit = async (value: string) => {
@@ -202,17 +262,25 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       return;
     }
 
+    const priceVal = parseFloat(price);
+    if (isNaN(priceVal)) {
+      setError("Invalid form data");
+      return;
+    }
+
+    await submitTransaction(priceVal, feeResult.value);
+  };
+
+  const submitTransaction = async (pricePerShare: number, feesValue: number) => {
     const dateResult = parseDate(date);
     const qtyResult = validateQuantity(quantity);
-    const priceResult = validatePrice(price);
 
-    if (!dateResult || !qtyResult.success || !priceResult.success) {
+    if (!dateResult || !qtyResult.success) {
       setError("Invalid form data");
       return;
     }
 
     try {
-      // Use already-fetched rate for USD stocks, or fetch for CAD
       const rate = exchangeRate ?? await getExchangeRateProvider().getRate(
         stock.currency,
         "CAD",
@@ -224,11 +292,11 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
         type: mode,
         date: dateResult,
         quantity: qtyResult.value,
-        pricePerShare: priceResult.value,
-        pricePerShareCad: priceResult.value * rate.rate,
+        pricePerShare: pricePerShare,
+        pricePerShareCad: pricePerShare * rate.rate,
         exchangeRate: rate.rate,
-        fees: feeResult.value,
-        feesCad: feeResult.value * rate.rate,
+        fees: feesValue,
+        feesCad: feesValue * rate.rate,
         exchangeRateIsEstimate: rate.isEstimate,
       });
 
@@ -241,53 +309,41 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
 
   const getFieldValue = (f: Field): string => {
     switch (f) {
-      case "date":
-        return date;
-      case "quantity":
-        return quantity;
-      case "price":
-        return price;
-      case "fees":
-        return fees;
+      case "date": return date;
+      case "quantity": return quantity;
+      case "price": return price;
+      case "total": return total;
+      case "fees": return fees;
     }
   };
 
   const getFieldLabel = (f: Field): string => {
     switch (f) {
-      case "date":
-        return "Date";
-      case "quantity":
-        return "Quantity";
-      case "price":
-        return `Price (${stock.currency})`;
-      case "fees":
-        return `Fees (${stock.currency})`;
+      case "date": return "Date";
+      case "quantity": return mode === "DRIP" ? "Shares" : "Quantity";
+      case "price": return `Price (${stock.currency})`;
+      case "total": return `Total (${stock.currency})`;
+      case "fees": return `Fees (${stock.currency})`;
     }
   };
 
   const getFieldPlaceholder = (f: Field): string => {
     switch (f) {
-      case "date":
-        return "today";
-      case "quantity":
-        return "100";
-      case "price":
-        return "150.50";
-      case "fees":
-        return "0";
+      case "date": return "today";
+      case "quantity": return mode === "DRIP" ? "12.95" : "100";
+      case "price": return mode === "DRIP" ? "or Enter for total" : "150.50";
+      case "total": return quantity ? `${(parseFloat(quantity) * 150.50).toFixed(2)}` : "10000";
+      case "fees": return "0";
     }
   };
 
   const getFieldHandler = (f: Field) => {
     switch (f) {
-      case "date":
-        return handleDateSubmit;
-      case "quantity":
-        return handleQuantitySubmit;
-      case "price":
-        return handlePriceSubmit;
-      case "fees":
-        return handleFeesSubmit;
+      case "date": return handleDateSubmit;
+      case "quantity": return handleQuantitySubmit;
+      case "price": return handlePriceSubmit;
+      case "total": return handleTotalSubmit;
+      case "fees": return handleFeesSubmit;
     }
   };
 
@@ -295,20 +351,28 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     if (stock.currency !== "USD" || !exchangeRate) return null;
     const value = getFieldValue(f);
     if (!value) return null;
-
     const num = parseFloat(value);
     if (isNaN(num) || num <= 0) return null;
+    return formatCurrency(num * exchangeRate.rate, "CAD");
+  };
 
-    const cad = num * exchangeRate.rate;
-    return formatCurrency(cad, "CAD");
+  const getFieldHint = (f: Field): string | null => {
+    if (f === "price" && total && field !== "price") {
+      return `= ${formatCurrency(parseFloat(total), stock.currency)} total`;
+    }
+    if (f === "total" && price && field !== "total") {
+      return `(${formatCurrency(parseFloat(price), stock.currency)}/share)`;
+    }
+    return null;
   };
 
   const renderFormField = (f: Field) => {
     const isActive = field === f;
-    const isPending = FIELDS.indexOf(f) > FIELDS.indexOf(field);
+    const isPending = fields.indexOf(f) > fields.indexOf(field);
     const value = getFieldValue(f);
     const label = getFieldLabel(f).padEnd(LABEL_WIDTH);
-    const cadConversion = (f === "price" || f === "fees") ? getCadConversion(f) : null;
+    const cadConversion = (f === "price" || f === "fees" || f === "total") ? getCadConversion(f) : null;
+    const hint = getFieldHint(f);
 
     return (
       <Box key={f} flexDirection="column">
@@ -317,6 +381,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
           {isActive ? (
             <TextInput
               key={`${formKey}-${f}`}
+              defaultValue={f === "total" && total ? total : undefined}
               placeholder={getFieldPlaceholder(f)}
               onSubmit={getFieldHandler(f)}
             />
@@ -325,7 +390,8 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
           ) : (
             <Text>
               {value}
-              {cadConversion && !isActive && (
+              {hint && <Text color="gray">{`  ${hint}`}</Text>}
+              {cadConversion && !hint && (
                 <Text color="gray">{`  → ${cadConversion}`}</Text>
               )}
             </Text>
@@ -364,6 +430,8 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
               <Text color="gray">{formatDate(new Date(tx.date))} </Text>
               {tx.type === "BUY" ? (
                 <Text color="green">BUY </Text>
+              ) : tx.type === "DRIP" ? (
+                <Text color="blue">DRIP</Text>
               ) : (
                 <Text color="red">SELL</Text>
               )}
@@ -384,27 +452,24 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   );
 
   const renderFormPanel = () => (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} width={42}>
+    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} width={44}>
       <Box>
-        <Text
-          color={mode === "BUY" ? "green" : "gray"}
-          bold={mode === "BUY"}
-          inverse={mode === "BUY"}
-        >
-          {" BUY "}
-        </Text>
-        <Text> </Text>
-        <Text
-          color={mode === "SELL" ? "red" : "gray"}
-          bold={mode === "SELL"}
-          inverse={mode === "SELL"}
-        >
-          {" SELL "}
-        </Text>
+        {MODES.map((m) => (
+          <React.Fragment key={m}>
+            <Text
+              color={mode === m ? (m === "BUY" ? "green" : m === "SELL" ? "red" : "blue") : "gray"}
+              bold={mode === m}
+              inverse={mode === m}
+            >
+              {` ${m} `}
+            </Text>
+            {m !== MODES[MODES.length - 1] && <Text> </Text>}
+          </React.Fragment>
+        ))}
       </Box>
 
       <Box marginTop={1} flexDirection="column">
-        {FIELDS.map(renderFormField)}
+        {fields.map(renderFormField)}
       </Box>
 
       {error && (
@@ -476,7 +541,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       {/* Footer */}
       <Box marginTop={1}>
         <Text color="gray">
-          [Tab] Buy/Sell · [Shift+Tab] Back · [Enter] Next{hasDistributionData ? " · [D] Sync distributions" : ""} · [Esc] Exit
+          [Tab] Mode · [Shift+Tab] Back · [Enter] Next{hasDistributionData ? " · [D] Sync distributions" : ""} · [Esc] Exit
         </Text>
       </Box>
     </Box>

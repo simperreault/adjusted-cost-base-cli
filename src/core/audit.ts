@@ -6,7 +6,7 @@ import {
 } from "./acb.ts";
 
 export interface AuditTransaction {
-  type: "BUY" | "SELL";
+  type: "BUY" | "SELL" | "DRIP";
   date: Date;
   quantity: number;
   pricePerShareCad: number;
@@ -43,7 +43,7 @@ export function generateAuditReport(transactions: AuditTransaction[]): AuditRepo
     const before = { ...state };
     const arithmetic: string[] = [];
 
-    if (tx.type === "BUY") {
+    if (tx.type === "BUY" || tx.type === "DRIP") {
       const purchaseCost = tx.quantity * tx.pricePerShareCad + tx.feesCad;
       arithmetic.push(`Purchase cost = ${tx.quantity} × ${fmt(tx.pricePerShareCad)} + ${fmt(tx.feesCad)} = ${fmt(purchaseCost)}`);
       arithmetic.push(`New total cost = ${fmt(before.totalCostCad)} + ${fmt(purchaseCost)} = ${fmt(before.totalCostCad + purchaseCost)}`);

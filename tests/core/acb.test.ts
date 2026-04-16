@@ -292,4 +292,37 @@ describe("recalculateAcbFromEvents", () => {
     const state = recalculateAcbFromEvents([]);
     expect(state).toEqual(getInitialAcbState());
   });
+
+  test("DRIP is treated identically to BUY for ACB", () => {
+    const buyEvents = [
+      { kind: "BUY" as const, date: new Date("2023-01-01"), quantity: 100, pricePerShareCad: 30, feesCad: 0 },
+      { kind: "BUY" as const, date: new Date("2023-06-15"), quantity: 12.95, pricePerShareCad: 24.80, feesCad: 0 },
+    ];
+    const dripEvents = [
+      { kind: "BUY" as const, date: new Date("2023-01-01"), quantity: 100, pricePerShareCad: 30, feesCad: 0 },
+      { kind: "DRIP" as const, date: new Date("2023-06-15"), quantity: 12.95, pricePerShareCad: 24.80, feesCad: 0 },
+    ];
+
+    const buyState = recalculateAcbFromEvents(buyEvents);
+    const dripState = recalculateAcbFromEvents(dripEvents);
+
+    expect(dripState.totalShares).toBe(buyState.totalShares);
+    expect(dripState.totalCostCad).toBeCloseTo(buyState.totalCostCad, 5);
+    expect(dripState.acbPerShare).toBeCloseTo(buyState.acbPerShare, 5);
+  });
+
+  test("DRIP sorts same as BUY (before distribution, before sell) on same date", () => {
+    const events = [
+      { kind: "DRIP" as const, date: new Date("2023-12-29"), quantity: 10, pricePerShareCad: 30, feesCad: 0 },
+      { kind: "DISTRIBUTION" as const, date: new Date("2023-12-29"), rocPerUnit: 0.50, phantomDistPerUnit: 0 },
+      { kind: "SELL" as const, date: new Date("2023-12-29"), quantity: 5, pricePerShareCad: 35, feesCad: 0 },
+    ];
+
+    const state = recalculateAcbFromEvents(events);
+    // DRIP first: 10 shares, $300
+    // DIST: ROC 0.50 * 10 = $5 → $295
+    // SELL 5: proceeds $175, cost 5 * 29.50 = $147.50, gain = $27.50
+    expect(state.totalShares).toBe(5);
+    expect(state.totalCostCad).toBeCloseTo(147.50, 2);
+  });
 });

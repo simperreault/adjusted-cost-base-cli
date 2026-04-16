@@ -40,7 +40,7 @@ export const auditCommand = new Command("audit")
       const chronological = [...allTransactions].reverse();
 
       const auditTransactions: AuditTransaction[] = chronological.map((tx) => ({
-        type: tx.type as "BUY" | "SELL",
+        type: tx.type as "BUY" | "SELL" | "DRIP",
         date: new Date(tx.date),
         quantity: tx.quantity,
         pricePerShareCad: tx.pricePerShareCad,

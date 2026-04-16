@@ -15,7 +15,7 @@ export const transactions = sqliteTable("transactions", {
   stockId: integer("stock_id")
     .notNull()
     .references(() => stocks.id, { onDelete: "cascade" }),
-  type: text("type", { enum: ["BUY", "SELL"] }).notNull(),
+  type: text("type", { enum: ["BUY", "SELL", "DRIP"] }).notNull(),
   date: integer("date", { mode: "timestamp" }).notNull(),
   quantity: real("quantity").notNull(),
   pricePerShare: real("price_per_share").notNull(),

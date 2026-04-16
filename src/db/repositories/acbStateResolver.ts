@@ -32,7 +32,7 @@ export function buildAcbEvents(
 
   for (const tx of allTx) {
     events.push({
-      kind: tx.type as "BUY" | "SELL",
+      kind: tx.type as "BUY" | "SELL" | "DRIP",
       date: tx.date,
       quantity: tx.quantity,
       pricePerShareCad: tx.pricePerShareCad,
