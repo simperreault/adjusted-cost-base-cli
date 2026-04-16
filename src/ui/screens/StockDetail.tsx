@@ -12,6 +12,8 @@ import {
   type ExchangeRate,
 } from "../../services/exchangeRate/index.ts";
 import type { TransactionRow, StockSnapshotRow } from "../../db/schema.ts";
+import { createDistributionRepository } from "../../db/repositories/distributionRepository.ts";
+import { isSupportedTicker } from "../../../data/distributions/index.ts";
 
 interface StockDetailProps {
   db: AppDatabase;
@@ -48,7 +50,12 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   // Exchange rate state (fetched after date is entered for USD stocks)
   const [exchangeRate, setExchangeRate] = useState<ExchangeRate | null>(null);
 
+  // Distribution sync state
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const hasDistributionData = isSupportedTicker(stock.ticker);
+
   const txRepo = createTransactionRepository(db);
+  const distRepo = createDistributionRepository(db);
 
   const refreshData = () => {
     const recent = txRepo.findRecent(stock.id, 50);
@@ -91,6 +98,22 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
           setField(prevField);
           setError(null);
         }
+      }
+      return;
+    }
+
+    // D: sync distribution data
+    if (input === "d" && hasDistributionData && field === "date") {
+      try {
+        const { applied, updated, skipped } = distRepo.applyBundledDistributions(stock.id, stock.ticker);
+        const parts = [];
+        if (applied > 0) parts.push(`${applied} applied`);
+        if (updated > 0) parts.push(`${updated} updated`);
+        if (skipped > 0) parts.push(`${skipped} unchanged`);
+        setSyncMessage(`Distributions synced: ${parts.join(", ")}`);
+        refreshData();
+      } catch (e) {
+        setSyncMessage(`Sync failed: ${e instanceof Error ? e.message : String(e)}`);
       }
       return;
     }
@@ -443,10 +466,17 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
         </Box>
       )}
 
+      {/* Sync message */}
+      {syncMessage && (
+        <Box marginTop={1}>
+          <Text color="yellow">{syncMessage}</Text>
+        </Box>
+      )}
+
       {/* Footer */}
       <Box marginTop={1}>
         <Text color="gray">
-          [Tab] Buy/Sell · [Shift+Tab] Back · [Enter] Next · [Esc] Exit
+          [Tab] Buy/Sell · [Shift+Tab] Back · [Enter] Next{hasDistributionData ? " · [D] Sync distributions" : ""} · [Esc] Exit
         </Text>
       </Box>
     </Box>

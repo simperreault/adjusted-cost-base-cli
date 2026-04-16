@@ -3,7 +3,8 @@ import { createInMemoryDatabase } from "../../src/db/index.ts";
 import { createTransactionRepository } from "../../src/db/repositories/transactionRepository.ts";
 import { createDistributionRepository } from "../../src/db/repositories/distributionRepository.ts";
 import { resolveAcbState } from "../../src/db/repositories/acbStateResolver.ts";
-import { stocks } from "../../src/db/schema.ts";
+import { stocks, distributions } from "../../src/db/schema.ts";
+import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../../src/db/index.ts";
 
 describe("distribution integration", () => {
@@ -163,5 +164,93 @@ describe("distribution integration", () => {
     expect(snapshot.rocAppliedCad).toBe(0);
     expect(snapshot.phantomAppliedCad).toBe(0);
     expect(snapshot.totalShares).toBe(0);
+  });
+});
+
+describe("applyBundledDistributions", () => {
+  let db: AppDatabase;
+  let stockId: number;
+
+  beforeEach(() => {
+    db = createInMemoryDatabase();
+    // Use XEQT ticker so bundled data is available
+    const stock = db
+      .insert(stocks)
+      .values({ name: "iShares Core Equity ETF Portfolio", ticker: "XEQT", currency: "CAD", createdAt: new Date() })
+      .returning()
+      .get();
+    stockId = stock.id;
+  });
+
+  test("first sync applies all bundled distributions", () => {
+    const distRepo = createDistributionRepository(db);
+    const { applied, updated, skipped } = distRepo.applyBundledDistributions(stockId, "XEQT");
+
+    expect(applied).toBeGreaterThan(0);
+    expect(updated).toBe(0);
+    expect(skipped).toBe(0);
+
+    const all = distRepo.findByStockId(stockId);
+    expect(all.length).toBe(applied);
+  });
+
+  test("second sync with unchanged data skips everything", () => {
+    const distRepo = createDistributionRepository(db);
+    distRepo.applyBundledDistributions(stockId, "XEQT");
+
+    const result = distRepo.applyBundledDistributions(stockId, "XEQT");
+    expect(result.applied).toBe(0);
+    expect(result.updated).toBe(0);
+    expect(result.skipped).toBeGreaterThan(0);
+  });
+
+  test("re-sync updates records when values change", () => {
+    const distRepo = createDistributionRepository(db);
+    distRepo.applyBundledDistributions(stockId, "XEQT");
+
+    // Manually modify one distribution to simulate stale data
+    const all = distRepo.findByStockId(stockId);
+    const first = all[all.length - 1]!; // oldest
+    db.update(distributions)
+      .set({ rocPerUnit: 0.99999 })
+      .where(eq(distributions.id, first.id))
+      .run();
+
+    const result = distRepo.applyBundledDistributions(stockId, "XEQT");
+    expect(result.updated).toBe(1);
+    expect(result.applied).toBe(0);
+
+    // Verify the value was corrected
+    const refreshed = distRepo.findByRecordDate(stockId, first.recordDate);
+    expect(refreshed).toBeDefined();
+    expect(refreshed!.rocPerUnit).not.toBe(0.99999);
+  });
+
+  test("sync with shares correctly adjusts ACB", () => {
+    const txRepo = createTransactionRepository(db);
+    const distRepo = createDistributionRepository(db);
+
+    // Buy 1000 shares at $30
+    txRepo.create({
+      stockId, type: "BUY", date: new Date("2020-01-01"),
+      quantity: 1000, pricePerShare: 30, pricePerShareCad: 30,
+      exchangeRate: 1, fees: 0, feesCad: 0,
+    });
+
+    const stateBefore = resolveAcbState(db, stockId);
+    expect(stateBefore.totalCostCad).toBe(30000);
+
+    distRepo.applyBundledDistributions(stockId, "XEQT");
+
+    const stateAfter = resolveAcbState(db, stockId);
+    // ACB should have changed: decreased by ROC, increased by phantom
+    expect(stateAfter.totalCostCad).not.toBe(30000);
+    expect(stateAfter.totalShares).toBe(1000);
+  });
+
+  test("returns zeros for unsupported ticker", () => {
+    const distRepo = createDistributionRepository(db);
+    const result = distRepo.applyBundledDistributions(stockId, "AAPL");
+    expect(result).toEqual({ applied: 0, updated: 0, skipped: 0 });
   });
 });

@@ -147,11 +147,14 @@ const syncCommand = new Command("sync")
         return;
       }
 
-      const { applied, skipped } = distRepo.applyBundledDistributions(stock.id, ticker);
+      const { applied, updated, skipped } = distRepo.applyBundledDistributions(stock.id, ticker);
       console.log(`\nSync complete for ${ticker}:`);
       console.log(`  Applied: ${applied} distribution(s)`);
+      if (updated > 0) {
+        console.log(`  Updated: ${updated} (values changed)`);
+      }
       if (skipped > 0) {
-        console.log(`  Skipped: ${skipped} (already exist)`);
+        console.log(`  Skipped: ${skipped} (unchanged)`);
       }
     } catch (error) {
       console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);

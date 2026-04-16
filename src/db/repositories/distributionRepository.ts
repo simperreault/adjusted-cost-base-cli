@@ -133,17 +133,20 @@ export function createDistributionRepository(db: AppDatabase) {
     },
 
     /**
-     * Applies bundled distribution data for a ticker, skipping any that
-     * already exist (matched by record date).
+     * Applies bundled distribution data for a ticker.
+     * - New record dates are inserted.
+     * - Existing records with changed values are deleted and re-created.
+     * - Matching records are skipped.
      */
     applyBundledDistributions(
       stockId: number,
       ticker: string
-    ): { applied: number; skipped: number } {
+    ): { applied: number; updated: number; skipped: number } {
       const bundled = getBundledDistributions(ticker);
-      if (!bundled) return { applied: 0, skipped: 0 };
+      if (!bundled) return { applied: 0, updated: 0, skipped: 0 };
 
       let applied = 0;
+      let updated = 0;
       let skipped = 0;
 
       for (const dist of bundled.distributions) {
@@ -151,8 +154,20 @@ export function createDistributionRepository(db: AppDatabase) {
         const existing = this.findByRecordDate(stockId, recordDate);
 
         if (existing) {
-          skipped++;
-          continue;
+          const valuesMatch =
+            Math.abs(existing.rocPerUnit - dist.rocPerUnit) < 1e-10 &&
+            Math.abs(existing.phantomDistPerUnit - dist.phantomDistPerUnit) < 1e-10;
+
+          if (valuesMatch) {
+            skipped++;
+            continue;
+          }
+
+          // Values changed — delete old and re-create
+          this.delete(existing.id);
+          updated++;
+        } else {
+          applied++;
         }
 
         this.create({
@@ -163,10 +178,9 @@ export function createDistributionRepository(db: AppDatabase) {
           source: "bundled",
           notes: `Auto-applied from ${bundled.provider} data`,
         });
-        applied++;
       }
 
-      return { applied, skipped };
+      return { applied, updated, skipped };
     },
   };
 }
