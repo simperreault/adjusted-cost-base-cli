@@ -84,6 +84,19 @@ export const distributionSnapshots = sqliteTable("distribution_snapshots", {
     .$defaultFn(() => new Date()),
 });
 
+export const stockSplits = sqliteTable("stock_splits", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  stockId: integer("stock_id")
+    .notNull()
+    .references(() => stocks.id, { onDelete: "cascade" }),
+  date: integer("date", { mode: "timestamp" }).notNull(),
+  ratio: real("ratio").notNull(),
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export type StockRow = typeof stocks.$inferSelect;
 export type NewStockRow = typeof stocks.$inferInsert;
 export type TransactionRow = typeof transactions.$inferSelect;
@@ -94,3 +107,5 @@ export type DistributionRow = typeof distributions.$inferSelect;
 export type NewDistributionRow = typeof distributions.$inferInsert;
 export type DistributionSnapshotRow = typeof distributionSnapshots.$inferSelect;
 export type NewDistributionSnapshotRow = typeof distributionSnapshots.$inferInsert;
+export type StockSplitRow = typeof stockSplits.$inferSelect;
+export type NewStockSplitRow = typeof stockSplits.$inferInsert;

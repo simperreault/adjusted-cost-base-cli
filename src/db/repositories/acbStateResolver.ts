@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../index.ts";
-import { transactions, distributions } from "../schema.ts";
+import { transactions, distributions, stockSplits } from "../schema.ts";
 import {
   type AcbEvent,
   recalculateAcbFromEvents,
@@ -28,6 +28,12 @@ export function buildAcbEvents(
     .where(eq(distributions.stockId, stockId))
     .all();
 
+  const allSplits = db
+    .select()
+    .from(stockSplits)
+    .where(eq(stockSplits.stockId, stockId))
+    .all();
+
   const events: AcbEvent[] = [];
 
   for (const tx of allTx) {
@@ -46,6 +52,14 @@ export function buildAcbEvents(
       date: dist.recordDate,
       rocPerUnit: dist.rocPerUnit,
       phantomDistPerUnit: dist.phantomDistPerUnit,
+    });
+  }
+
+  for (const split of allSplits) {
+    events.push({
+      kind: "SPLIT",
+      date: split.date,
+      ratio: split.ratio,
     });
   }
 

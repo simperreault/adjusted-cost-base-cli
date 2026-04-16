@@ -159,14 +159,36 @@ export function calculateAcbAfterDistribution(
   };
 }
 
+export function calculateAcbAfterSplit(
+  currentState: ACBState,
+  ratio: number
+): ACBState {
+  validatePositive(ratio, "Split ratio");
+
+  if (currentState.totalShares <= 0) {
+    return currentState;
+  }
+
+  const newTotalShares = currentState.totalShares * ratio;
+
+  const newState: ACBState = {
+    totalShares: newTotalShares,
+    totalCostCad: currentState.totalCostCad,
+    acbPerShare: currentState.totalCostCad / newTotalShares,
+  };
+  assertACBState(newState, { operation: "split", ratio });
+  return newState;
+}
+
 export type AcbEvent =
   | { kind: "BUY"; date: Date; quantity: number; pricePerShareCad: number; feesCad: number }
   | { kind: "DRIP"; date: Date; quantity: number; pricePerShareCad: number; feesCad: number }
   | { kind: "SELL"; date: Date; quantity: number; pricePerShareCad: number; feesCad: number }
-  | { kind: "DISTRIBUTION"; date: Date; rocPerUnit: number; phantomDistPerUnit: number };
+  | { kind: "DISTRIBUTION"; date: Date; rocPerUnit: number; phantomDistPerUnit: number }
+  | { kind: "SPLIT"; date: Date; ratio: number };
 
 export function recalculateAcbFromEvents(events: AcbEvent[]): ACBState {
-  const order = { BUY: 0, DRIP: 0, DISTRIBUTION: 1, SELL: 2 };
+  const order = { BUY: 0, DRIP: 0, SPLIT: 1, DISTRIBUTION: 1, SELL: 2 };
   const sorted = [...events].sort((a, b) => {
     const dateDiff = a.date.getTime() - b.date.getTime();
     if (dateDiff !== 0) return dateDiff;
@@ -189,6 +211,8 @@ export function recalculateAcbFromEvents(events: AcbEvent[]): ACBState {
         feesCad: event.feesCad,
       });
       state = result.newState;
+    } else if (event.kind === "SPLIT") {
+      state = calculateAcbAfterSplit(state, event.ratio);
     } else {
       const result = calculateAcbAfterDistribution(state, {
         rocPerUnit: event.rocPerUnit,

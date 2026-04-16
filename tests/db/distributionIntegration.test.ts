@@ -2,6 +2,7 @@ import { describe, expect, test, beforeEach } from "bun:test";
 import { createInMemoryDatabase } from "../../src/db/index.ts";
 import { createTransactionRepository } from "../../src/db/repositories/transactionRepository.ts";
 import { createDistributionRepository } from "../../src/db/repositories/distributionRepository.ts";
+import { createStockSplitRepository } from "../../src/db/repositories/stockSplitRepository.ts";
 import { resolveAcbState } from "../../src/db/repositories/acbStateResolver.ts";
 import { stocks, distributions } from "../../src/db/schema.ts";
 import { eq } from "drizzle-orm";
@@ -164,6 +165,76 @@ describe("distribution integration", () => {
     expect(snapshot.rocAppliedCad).toBe(0);
     expect(snapshot.phantomAppliedCad).toBe(0);
     expect(snapshot.totalShares).toBe(0);
+  });
+});
+
+describe("stock splits", () => {
+  let db: AppDatabase;
+  let stockId: number;
+
+  beforeEach(() => {
+    db = createInMemoryDatabase();
+    const stock = db
+      .insert(stocks)
+      .values({ name: "Test Stock", ticker: "TEST", currency: "CAD", createdAt: new Date() })
+      .returning()
+      .get();
+    stockId = stock.id;
+  });
+
+  test("2:1 split through repository updates ACB state", () => {
+    const txRepo = createTransactionRepository(db);
+    const splitRepo = createStockSplitRepository(db);
+
+    txRepo.create({
+      stockId, type: "BUY", date: new Date("2023-01-01"),
+      quantity: 100, pricePerShare: 40, pricePerShareCad: 40,
+      exchangeRate: 1, fees: 0, feesCad: 0,
+    });
+
+    splitRepo.create({ stockId, date: new Date("2023-06-15"), ratio: 2 });
+
+    const state = resolveAcbState(db, stockId);
+    expect(state.totalShares).toBe(200);
+    expect(state.totalCostCad).toBe(4000);
+    expect(state.acbPerShare).toBe(20);
+  });
+
+  test("split + distribution + sell produces correct gain", () => {
+    const txRepo = createTransactionRepository(db);
+    const splitRepo = createStockSplitRepository(db);
+    const distRepo = createDistributionRepository(db);
+
+    txRepo.create({
+      stockId, type: "BUY", date: new Date("2023-01-01"),
+      quantity: 100, pricePerShare: 40, pricePerShareCad: 40,
+      exchangeRate: 1, fees: 0, feesCad: 0,
+    });
+
+    // 2:1 split → 200 shares, $20/share ACB
+    splitRepo.create({ stockId, date: new Date("2023-06-15"), ratio: 2 });
+
+    // ROC on 200 shares → $100 reduction
+    distRepo.create({
+      stockId, recordDate: new Date("2023-12-29"),
+      rocPerUnit: 0.50, phantomDistPerUnit: 0, source: "manual",
+    });
+
+    const state = resolveAcbState(db, stockId);
+    // 4000 - (0.50 * 200) = 3900
+    expect(state.totalShares).toBe(200);
+    expect(state.totalCostCad).toBe(3900);
+    expect(state.acbPerShare).toBe(19.50);
+
+    // Sell all at $25
+    const { snapshot } = txRepo.create({
+      stockId, type: "SELL", date: new Date("2024-06-15"),
+      quantity: 200, pricePerShare: 25, pricePerShareCad: 25,
+      exchangeRate: 1, fees: 0, feesCad: 0,
+    });
+
+    // Gain = $5000 - $3900 = $1100
+    expect(snapshot.realizedGainCad).toBeCloseTo(1100, 2);
   });
 });
 

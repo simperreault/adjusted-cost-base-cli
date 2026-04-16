@@ -3,6 +3,7 @@ import {
   calculateAcbAfterBuy,
   calculateAcbAfterSell,
   calculateAcbAfterDistribution,
+  calculateAcbAfterSplit,
   getInitialAcbState,
   recalculateAcbFromTransactions,
   recalculateAcbFromEvents,
@@ -291,6 +292,58 @@ describe("recalculateAcbFromEvents", () => {
   test("handles empty events list", () => {
     const state = recalculateAcbFromEvents([]);
     expect(state).toEqual(getInitialAcbState());
+  });
+
+  test("2:1 split doubles shares, halves ACB/share, preserves total cost", () => {
+    const events = [
+      { kind: "BUY" as const, date: new Date("2023-01-01"), quantity: 100, pricePerShareCad: 40, feesCad: 0 },
+      { kind: "SPLIT" as const, date: new Date("2023-06-15"), ratio: 2 },
+    ];
+    const state = recalculateAcbFromEvents(events);
+    expect(state.totalShares).toBe(200);
+    expect(state.totalCostCad).toBe(4000);
+    expect(state.acbPerShare).toBe(20);
+  });
+
+  test("1:10 reverse split reduces shares, increases ACB/share", () => {
+    const events = [
+      { kind: "BUY" as const, date: new Date("2023-01-01"), quantity: 1000, pricePerShareCad: 5, feesCad: 0 },
+      { kind: "SPLIT" as const, date: new Date("2023-06-15"), ratio: 0.1 },
+    ];
+    const state = recalculateAcbFromEvents(events);
+    expect(state.totalShares).toBe(100);
+    expect(state.totalCostCad).toBe(5000);
+    expect(state.acbPerShare).toBe(50);
+  });
+
+  test("3:2 fractional split", () => {
+    const events = [
+      { kind: "BUY" as const, date: new Date("2023-01-01"), quantity: 100, pricePerShareCad: 30, feesCad: 0 },
+      { kind: "SPLIT" as const, date: new Date("2023-06-15"), ratio: 1.5 },
+    ];
+    const state = recalculateAcbFromEvents(events);
+    expect(state.totalShares).toBe(150);
+    expect(state.totalCostCad).toBe(3000);
+    expect(state.acbPerShare).toBe(20);
+  });
+
+  test("split with zero shares is a no-op", () => {
+    const state = getInitialAcbState();
+    const result = calculateAcbAfterSplit(state, 2);
+    expect(result).toEqual(state);
+  });
+
+  test("split then sell calculates gain correctly", () => {
+    const events = [
+      { kind: "BUY" as const, date: new Date("2023-01-01"), quantity: 100, pricePerShareCad: 40, feesCad: 0 },
+      { kind: "SPLIT" as const, date: new Date("2023-06-15"), ratio: 2 },
+      { kind: "SELL" as const, date: new Date("2024-01-01"), quantity: 200, pricePerShareCad: 25, feesCad: 0 },
+    ];
+    const state = recalculateAcbFromEvents(events);
+    // After split: 200 shares, $4000 cost, $20/share
+    // Sell 200 @ $25: proceeds $5000, cost $4000, gain $1000
+    expect(state.totalShares).toBe(0);
+    expect(state.totalCostCad).toBe(0);
   });
 
   test("DRIP is treated identically to BUY for ACB", () => {

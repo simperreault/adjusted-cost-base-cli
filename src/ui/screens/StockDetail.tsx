@@ -13,7 +13,9 @@ import {
 } from "../../services/exchangeRate/index.ts";
 import type { TransactionRow, StockSnapshotRow } from "../../db/schema.ts";
 import { createDistributionRepository } from "../../db/repositories/distributionRepository.ts";
+import { createStockSplitRepository } from "../../db/repositories/stockSplitRepository.ts";
 import { isSupportedTicker } from "../../../data/distributions/index.ts";
+import { resolveAcbState } from "../../db/repositories/acbStateResolver.ts";
 
 interface StockDetailProps {
   db: AppDatabase;
@@ -61,8 +63,13 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const hasDistributionData = isSupportedTicker(stock.ticker);
 
+  // Split input state
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitRatio, setSplitRatio] = useState("");
+
   const txRepo = createTransactionRepository(db);
   const distRepo = createDistributionRepository(db);
+  const splitRepo = createStockSplitRepository(db);
 
   const fields = getFields(mode);
 
@@ -84,6 +91,11 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
 
   useInput((input, key) => {
     if (key.escape) {
+      if (splitMode) {
+        setSplitMode(false);
+        setSplitRatio("");
+        return;
+      }
       onBack();
       return;
     }
@@ -104,6 +116,13 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
           setError(null);
         }
       }
+      return;
+    }
+
+    // S: enter split mode
+    if (input === "s" && !splitMode && field === "date") {
+      setSplitMode(true);
+      setSyncMessage(null);
       return;
     }
 
@@ -130,6 +149,61 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       setScrollOffset((o) => Math.min(maxOffset, o + 1));
     }
   });
+
+  const handleSplitSubmit = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setSplitMode(false);
+      return;
+    }
+
+    // Parse ratio: accept "2:1", "1:10", or just "2"
+    let ratio: number;
+    const colonMatch = trimmed.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+    if (colonMatch) {
+      const numerator = parseFloat(colonMatch[1]!);
+      const denominator = parseFloat(colonMatch[2]!);
+      if (denominator === 0) {
+        setError("Invalid split ratio");
+        return;
+      }
+      ratio = numerator / denominator;
+    } else {
+      ratio = parseFloat(trimmed);
+    }
+
+    if (isNaN(ratio) || ratio <= 0) {
+      setError("Split ratio must be a positive number (e.g. 2:1 or 0.1)");
+      return;
+    }
+
+    const currentState = resolveAcbState(db, stock.id);
+    if (currentState.totalShares <= 0) {
+      setError("No shares to split");
+      return;
+    }
+
+    try {
+      splitRepo.create({
+        stockId: stock.id,
+        date: new Date(),
+        ratio,
+        notes: `${trimmed} split`,
+      });
+
+      const newState = resolveAcbState(db, stock.id);
+      setSyncMessage(
+        `Split recorded: ${currentState.totalShares} → ${newState.totalShares.toFixed(2)} shares, ` +
+        `ACB ${formatCurrency(currentState.acbPerShare, "CAD")} → ${formatCurrency(newState.acbPerShare, "CAD")}/share`
+      );
+      setSplitMode(false);
+      setSplitRatio("");
+      setError(null);
+      refreshData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to record split");
+    }
+  };
 
   const resetForm = () => {
     setDate("");
@@ -451,34 +525,60 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
     </Box>
   );
 
-  const renderFormPanel = () => (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} width={44}>
-      <Box>
-        {MODES.map((m) => (
-          <React.Fragment key={m}>
-            <Text
-              color={mode === m ? (m === "BUY" ? "green" : m === "SELL" ? "red" : "blue") : "gray"}
-              bold={mode === m}
-              inverse={mode === m}
-            >
-              {` ${m} `}
-            </Text>
-            {m !== MODES[MODES.length - 1] && <Text> </Text>}
-          </React.Fragment>
-        ))}
-      </Box>
-
-      <Box marginTop={1} flexDirection="column">
-        {fields.map(renderFormField)}
-      </Box>
-
-      {error && (
-        <Box marginTop={1}>
-          <Text color="red">{error}</Text>
+  const renderFormPanel = () => {
+    if (splitMode) {
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} width={44}>
+          <Text bold color="yellow">Stock Split</Text>
+          <Box marginTop={1}>
+            <Text color="cyan">{"Ratio".padEnd(LABEL_WIDTH)}</Text>
+            <TextInput
+              key={`split-${formKey}`}
+              placeholder="2:1"
+              onSubmit={handleSplitSubmit}
+            />
+          </Box>
+          <Box marginTop={1}>
+            <Text color="gray">Enter ratio (e.g. 2:1, 1:10, 3:2) or Esc to cancel</Text>
+          </Box>
+          {error && (
+            <Box marginTop={1}>
+              <Text color="red">{error}</Text>
+            </Box>
+          )}
         </Box>
-      )}
-    </Box>
-  );
+      );
+    }
+
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} width={44}>
+        <Box>
+          {MODES.map((m) => (
+            <React.Fragment key={m}>
+              <Text
+                color={mode === m ? (m === "BUY" ? "green" : m === "SELL" ? "red" : "blue") : "gray"}
+                bold={mode === m}
+                inverse={mode === m}
+              >
+                {` ${m} `}
+              </Text>
+              {m !== MODES[MODES.length - 1] && <Text> </Text>}
+            </React.Fragment>
+          ))}
+        </Box>
+
+        <Box marginTop={1} flexDirection="column">
+          {fields.map(renderFormField)}
+        </Box>
+
+        {error && (
+          <Box marginTop={1}>
+            <Text color="red">{error}</Text>
+          </Box>
+        )}
+      </Box>
+    );
+  };
 
   return (
     <Box flexDirection="column" key={formKey}>
@@ -541,7 +641,7 @@ export function StockDetail({ db, stock, onBack }: StockDetailProps) {
       {/* Footer */}
       <Box marginTop={1}>
         <Text color="gray">
-          [Tab] Mode · [Shift+Tab] Back · [Enter] Next{hasDistributionData ? " · [D] Sync distributions" : ""} · [Esc] Exit
+          [Tab] Mode · [S] Split{hasDistributionData ? " · [D] Distributions" : ""} · [Esc] Exit
         </Text>
       </Box>
     </Box>
